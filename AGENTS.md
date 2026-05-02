@@ -15,6 +15,32 @@
 - **Never add co-author trailers** to commits (no `Co-Authored-By:` lines —
   including for Claude). Commits should be authored solely by the user.
 
+## Commit Message Format
+
+- **Wrap commit body lines at ~72 characters.** `gitlint` enforces a
+  100-char body line limit; aim for 72 to stay clear of it.
+- **Never use `git commit -m "subject" -m "long body…"`.** Multiple `-m`
+  flags concatenate as separate paragraphs but each one becomes a single
+  unbroken line — long bodies always exceed the line-length cap. Use a
+  heredoc with manual line wrapping instead:
+
+    ```bash
+    git commit -m "$(cat <<'EOF'
+    type: short subject under 72 chars
+
+    Body paragraph wrapped at about 72 columns so it stays clear of
+    gitlint's 100-char body-line-length cap.
+
+    Second paragraph also wrapped.
+    EOF
+    )"
+    ```
+
+- **Backtick uppercase identifiers in the subject** so
+  `subject-case-allow-backticks` (in `.commitlintrc.cjs`) accepts them:
+    - ❌ `chore: add MIT license`
+    - ✅ ``chore: add `MIT` license``
+
 ## PR Bodies
 
 - **Do not include unchecked test-plan checklists** (or any other unchecked
