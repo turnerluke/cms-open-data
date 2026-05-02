@@ -1,0 +1,102 @@
+# ==============================================================================================================================
+# Gitlint Configuration
+# ==============================================================================================================================
+# Enforces conventional commit message format and quality standards.
+# Allows WIP commits for work-in-progress development.
+#
+# CONVENTIONAL COMMIT FORMAT:
+# <type>[optional scope]: <description>
+#
+# [optional body]
+#
+# [optional footer(s)]
+#
+# EXAMPLES:
+# ✅ feat: add user authentication
+# ✅ fix(api): resolve timeout in user endpoint
+# ✅ docs: update installation guide
+# ✅ feat!: breaking change to API structure
+# ✅ chore(deps): bump lodash from 4.17.20 to 4.17.21
+# ✅ WIP: implementing user dashboard
+# ✅ wip: fixing login issues
+# ✅ [WIP] refactor authentication module
+#
+# ❌ Updated some files
+# ❌ fix: Fix bug in API.
+# ❌ FEAT: add new feature
+# ❌ feature: add authentication (invalid type)
+#
+# ==============================================================================================================================
+---
+# ==============================================================================================================================
+# GENERAL SETTINGS
+# ==============================================================================================================================
+general:
+  # Ignore specific rules by their ID or name
+  # B6 = body-is-missing: Allow commits without body text (useful for simple changes)
+  ignore: "B6"
+
+  # Enable debug mode for troubleshooting (uncomment to enable)
+  # debug: true
+
+  # Verbosity level: 1=minimal, 2=default, 3=verbose
+  verbosity: 2
+
+  # Ignore merge commits, fixup commits, etc.
+  ignore-merge-commits: true
+  ignore-fixup-commits: true
+  ignore-squash-commits: true
+  ignore-revert-commits: true
+
+# ==============================================================================================================================
+# WIP COMMIT PATTERNS - Allow work-in-progress commits
+# ==============================================================================================================================
+ignore-by-title:
+  # Ignore commits that match WIP patterns (case-insensitive)
+  # Matches:
+  # - WIP: description
+  # - wip: description
+  # - [WIP] description
+  # - (WIP) description
+  regex: "^(WIP|wip).*|.*\\[(WIP|wip)\\].*|.*\\((WIP|wip)\\).*"
+
+# ==============================================================================================================================
+# TITLE RULES (T) - First line of commit message
+# ==============================================================================================================================
+title-max-length:
+  # Maximum length for commit message title
+  # Recommendation: 50-72 characters for optimal readability in git logs
+  line-length: 72
+
+title-must-not-contain-word:
+  # Prevent specific words in commit titles (case-insensitive)
+  # Useful for avoiding vague or unhelpful commit messages
+  # Note: WIP is handled by ignore patterns above, so not included here
+  words: "TODO,fixme,hack,temp,temporary,tmp"
+
+title-match-regex:
+  # Enforce conventional commit format using regex
+  # Pattern breakdown:
+  # ^                          - Start of string
+  # (feat|fix|docs|...)        - Required type (one of the specified types)
+  # (\(.+\))?                  - Optional scope in parentheses
+  # !?                         - Optional breaking change indicator
+  # :                          - Required colon separator
+  # \s                         - Required space after colon
+  # .{1,50}                    - Description: 1-50 characters
+  # $                          - End of string (no newline in title)
+  regex: >-
+    ^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)
+    (\(.+\))?!?: .{1,50}$
+
+# ==============================================================================================================================
+# BODY RULES (B) - Lines after the title
+# ==============================================================================================================================
+body-max-line-length:
+  # Maximum length for each line in the commit body
+  # Standard practice is 72 characters for proper wrapping in various tools
+  line-length: 72
+
+body-min-length:
+  # Minimum length for commit body
+  min-length: 10
