@@ -5,6 +5,10 @@
 - **Always work on a branch.** Never commit directly to `main`.
 - **Always open a PR** for changes — even trivial ones. No direct pushes to
   `main`.
+- **Always branch from `main`.** Before creating a new branch, run
+  `git checkout main && git pull --ff-only` so the branch starts at the
+  current tip. Never stack new work on top of another open PR — wait for
+  the parent to merge, pull `main`, then branch.
 - Use conventional-commit format for commit messages and PR titles
   (`feat:`, `fix:`, `docs:`, `chore:`, etc.).
 - Keep each PR focused on one logical change.
