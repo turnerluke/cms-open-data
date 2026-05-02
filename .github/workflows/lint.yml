@@ -96,7 +96,7 @@ jobs:
 
       - name: Get changed Python files
         id: changed-files
-        uses: tj-actions/changed-files@v45
+        uses: tj-actions/changed-files@v47
         with:
           files: |
             **.py
@@ -248,7 +248,7 @@ jobs:
 
       - name: Get changed Markdown files
         id: changed-files
-        uses: tj-actions/changed-files@v45
+        uses: tj-actions/changed-files@v47
         with:
           files: |
             **.md
@@ -396,7 +396,7 @@ jobs:
 
       - name: Get changed YAML files
         id: changed-files
-        uses: tj-actions/changed-files@v45
+        uses: tj-actions/changed-files@v47
         with:
           files: |
             **.yml
@@ -537,7 +537,7 @@ jobs:
 
       - name: Get changed files
         id: changed-files
-        uses: tj-actions/changed-files@v45
+        uses: tj-actions/changed-files@v47
         with:
           files: |
             **.json
@@ -683,7 +683,7 @@ jobs:
 
       - name: Get changed shell files
         id: changed-files
-        uses: tj-actions/changed-files@v45
+        uses: tj-actions/changed-files@v47
         with:
           files: |
             **.sh
