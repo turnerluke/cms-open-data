@@ -16,6 +16,7 @@ repos:
       - id: check-json
       - id: debug-statements
       - id: detect-aws-credentials
+        args: [--allow-missing-credentials]
       - id: detect-private-key
       - id: end-of-file-fixer
       - id: trailing-whitespace
@@ -51,8 +52,7 @@ repos:
     rev: v3.4.2
     hooks:
       - id: prettier
-        types_or:
-          [javascript, jsx, ts, tsx, json, yaml, markdown, css, scss, html, toml]
+        types_or: [javascript, jsx, ts, tsx, json, yaml, markdown, css, scss, html, toml]
         args: [--write, --ignore-unknown]
         additional_dependencies:
           - prettier@3.4.2

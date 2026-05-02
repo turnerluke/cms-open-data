@@ -31,10 +31,7 @@ const subjectCaseAllowBackticks = parsed => {
   if (!parsed.subject) return [true];
   const stripped = parsed.subject.replace(/`[^`]*`/g, "");
   if (stripped === stripped.toLowerCase()) return [true];
-  return [
-    false,
-    "subject must be lower-case (wrap identifiers in `backticks` to allow caps)",
-  ];
+  return [false, "subject must be lower-case (wrap identifiers in `backticks` to allow caps)"];
 };
 
 module.exports = {
@@ -47,23 +44,7 @@ module.exports = {
     },
   ],
   rules: {
-    "type-enum": [
-      2,
-      "always",
-      [
-        "feat",
-        "fix",
-        "docs",
-        "style",
-        "refactor",
-        "perf",
-        "test",
-        "chore",
-        "ci",
-        "build",
-        "revert",
-      ],
-    ],
+    "type-enum": [2, "always", ["feat", "fix", "docs", "style", "refactor", "perf", "test", "chore", "ci", "build", "revert"]],
     "type-empty": [2, "never"],
     "type-case": [2, "always", "lower-case"],
     "subject-empty": [2, "never"],
