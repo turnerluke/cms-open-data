@@ -1,0 +1,31 @@
+# ==============================================================================================================================
+# .gitleaks.toml
+# ==============================================================================================================================
+# Gitleaks configuration
+# https://github.com/gitleaks/gitleaks
+# ==============================================================================================================================
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allowlist for test files and example credentials"
+
+# Fake/mock credentials for unit testing purposes.
+paths = ['''.*tests/.*\.py$''', '''.*test_.*\.py$''']
+
+regexes = [
+    # AWS example credentials from official AWS documentation.
+    # These are explicitly designated as fake/example values by AWS and are
+    # safe to use in documentation and tests.
+    # Source: https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html
+    '''AKIAIOSFODNN7EXAMPLE''',
+    '''wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY''',
+
+    # Generic test placeholder for password field
+    '''testpass''',
+
+    # Fake JWT token used in test fixtures
+    # with a dummy ".test" signature
+    '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.test''',
+]
