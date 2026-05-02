@@ -1,0 +1,144 @@
+# ==============================================================================================================================
+# Test
+# ==============================================================================================================================
+#
+# Automated testing workflow for pull requests.
+#
+# Features:
+#   - Repository-wide standards tests (tests/ at the repo root)
+#   - Automatic project discovery via pyproject.toml files (for future subprojects)
+#   - Parallel testing of changed subprojects via matrix
+#   - Coverage reporting via pytest-cov (term-missing in workflow logs)
+#
+# Prerequisites:
+#   - pyproject.toml + uv.lock at the repo root with pytest + pytest-cov in dev deps
+#   - tests/ directory at the repo root (and per-subproject when added)
+# ==============================================================================================================================
+---
+name: Test
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+env:
+  PYTHON_VERSION: "3.13"
+  UV_CACHE_DIR: /tmp/.uv-cache
+
+jobs:
+  # ============================================================================================================================
+  # Discover Subprojects
+  # ============================================================================================================================
+  discover_projects:
+    name: Discover Subprojects
+    runs-on: ubuntu-latest
+    outputs:
+      changed_projects: ${{ steps.filter_changed.outputs.changed_projects }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find subprojects with pyproject.toml
+        id: find_projects
+        run: |
+          # Subprojects are directories containing a pyproject.toml,
+          # excluding the repo root itself.
+          projects=$(find . -name "pyproject.toml" -type f | while read -r file; do
+            dir=$(dirname "$file")
+            dir=${dir#./}
+            if [ "$dir" != "." ]; then
+              echo "$dir"
+            fi
+          done | jq -R -s -c 'split("\n")[:-1]')
+          echo "Found subprojects: $projects"
+          echo "projects=$projects" >> "$GITHUB_OUTPUT"
+
+      - name: Get changed files
+        run: git diff --name-only origin/${{ github.base_ref }}...HEAD > changed_files.txt
+
+      - name: Filter changed subprojects
+        id: filter_changed
+        run: |
+          all_projects='${{ steps.find_projects.outputs.projects }}'
+          changed_projects_json=$(echo "$all_projects" | jq -r '.[]' | \
+            while read -r project; do
+              if [ -n "$project" ] && grep -q "^${project}/" changed_files.txt 2>/dev/null; then
+                echo "$project"
+              fi
+            done | jq -R -s -c 'split("\n")[:-1]')
+          echo "Changed subprojects: $changed_projects_json"
+          echo "changed_projects=$changed_projects_json" >> "$GITHUB_OUTPUT"
+
+  # ============================================================================================================================
+  # Repository Standards
+  # ============================================================================================================================
+  validate_standards:
+    name: Repository Standards
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run standards tests
+        run: uv run pytest tests/
+
+  # ============================================================================================================================
+  # Test Subprojects
+  # ============================================================================================================================
+  test_projects:
+    name: Test Subprojects
+    runs-on: ubuntu-latest
+    needs: discover_projects
+    if: needs.discover_projects.outputs.changed_projects != '[]'
+    strategy:
+      matrix:
+        project: ${{ fromJson(needs.discover_projects.outputs.changed_projects) }}
+      fail-fast: false
+      max-parallel: 3
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install subproject dependencies
+        working-directory: ./${{ matrix.project }}
+        run: |
+          if [ -f "pyproject.toml" ]; then
+            uv sync --dev
+          fi
+
+      - name: Run tests
+        if: hashFiles(format('{0}/tests/**', matrix.project)) != ''
+        working-directory: ./${{ matrix.project }}
+        run: uv run pytest
