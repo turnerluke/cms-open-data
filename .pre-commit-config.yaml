@@ -1,0 +1,73 @@
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+---
+repos:
+  # ============================================================================================================================
+  # General file checks
+  # ============================================================================================================================
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-ast
+      - id: check-docstring-first
+      - id: check-toml
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+      - id: debug-statements
+      - id: detect-aws-credentials
+        args: [--allow-missing-credentials]
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  # ============================================================================================================================
+  # Commit message linting
+  # ============================================================================================================================
+  - repo: https://github.com/jorisroovers/gitlint
+    rev: v0.19.1
+    hooks:
+      - id: gitlint
+
+  # ============================================================================================================================
+  # Language-specific linting and formatting
+  # ============================================================================================================================
+
+  # YAML
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.37.1
+    hooks:
+      - id: yamllint
+        args: [-c=.yamllint.yml]
+
+  # Markdown
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.45.0
+    hooks:
+      - id: markdownlint
+        args: [--config, .markdownlint.yml]
+
+  # Prettier (JS, TS, JSON, YAML, Markdown, CSS, HTML, TOML)
+  - repo: https://github.com/JoC0de/pre-commit-prettier
+    rev: v3.4.2
+    hooks:
+      - id: prettier
+        types_or: [javascript, jsx, ts, tsx, json, yaml, markdown, css, scss, html, toml]
+        args: [--write, --ignore-unknown]
+        additional_dependencies:
+          - prettier@3.4.2
+          - prettier-plugin-toml@2.0.1
+
+  # Python docstring coverage
+  - repo: https://github.com/econchick/interrogate
+    rev: "1.7.0"
+    hooks:
+      - id: interrogate
+        args: [-v]
+        exclude: tests/
+
+  # Python linting
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.13.0
+    hooks:
+      - id: ruff
