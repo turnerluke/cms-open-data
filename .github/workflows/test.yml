@@ -22,6 +22,11 @@ on:
     branches:
       - main
 
+# Cancel in-flight runs on the same ref when a new commit is pushed.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: write
