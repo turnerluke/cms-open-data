@@ -77,35 +77,15 @@ lines-after-imports = 2
 
 known-first-party = ["cms_open_data"]
 
-section-order = [
-    "future",
-    "standard-library",
-    "third-party",
-    "first-party",
-    "testing",
-]
+section-order = ["future", "standard-library", "third-party", "first-party", "testing"]
 
 [lint.isort.sections]
 testing = ["pytest*", "tests*"]
 
 [lint.per-file-ignores]
 # Test file relaxed standards
-"**/tests/**.py" = [
-    "INP001",
-    "S101",
-    "ARG",
-    "FBT",
-    "PLR2004",
-    "S105",
-    "S106",
-    "SLF001",
-]
+"**/tests/**.py" = ["INP001", "S101", "ARG", "FBT", "PLR2004", "S105", "S106", "SLF001"]
 # pytest configuration files
-"**/conftest.py" = [
-    "INP001",
-]
+"**/conftest.py" = ["INP001"]
 # Script file relaxed standards
-"**/scripts/**/*.py" = [
-    "T201",
-    "EXE001",
-]
+"**/scripts/**/*.py" = ["T201", "EXE001"]
