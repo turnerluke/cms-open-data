@@ -1,0 +1,152 @@
+"""Socrata client.
+
+`data.cms.gov` and `data.medicaid.gov` both run on the Socrata Open Data API,
+so a single client covers both — callers pick the domain.
+
+# Design choices
+- **Generators, not lists.** `iter_dataset` yields rows so callers can stream
+  large datasets without materialising the full result set in memory.
+- **Pydantic with ``extra='allow'``.** Socrata datasets have many columns and
+  the schema drifts over time (year columns get added, names change). The
+  typed wrappers declare the columns we know we care about; everything else
+  flows through as untyped extras so adding fields downstream doesn't require
+  a library release.
+- **No raw `httpx.Response` exposure.** Callers get parsed rows; if they need
+  raw HTTP behaviour they can build their own client with ``build_client``.
+"""
+
+from __future__ import annotations
+
+import os
+from typing import TYPE_CHECKING, Any
+
+from ._http import build_client, request_json
+from pydantic import BaseModel, ConfigDict
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Mapping
+
+
+CMS_DOMAIN = "data.cms.gov"
+MEDICAID_DOMAIN = "data.medicaid.gov"
+DEFAULT_BATCH_SIZE = 1000
+
+# Dataset IDs are Socrata's stable 4x4 identifier; pinning here keeps the
+# typed wrappers self-documenting.
+DATASET_PART_D_SPENDING_BY_DRUG = "mhdd-npjx"
+
+
+def _socrata_path(dataset_id: str) -> str:
+    """Return the Socrata resource path for ``dataset_id``."""
+    return f"/resource/{dataset_id}.json"
+
+
+def _resolve_app_token(app_token: str | None) -> str | None:
+    """Resolve the Socrata app token, defaulting to the ``CMS_API_SOCRATA_APP_TOKEN`` env var."""
+    if app_token is not None:
+        return app_token
+    return os.environ.get("CMS_API_SOCRATA_APP_TOKEN")
+
+
+def iter_dataset(  # noqa: PLR0913 -- public API; keyword-only args make explicit kwargs preferable to a params object
+    dataset_id: str,
+    *,
+    domain: str = CMS_DOMAIN,
+    select: str | None = None,
+    where: str | None = None,
+    order: str | None = None,
+    extra_params: Mapping[str, str] | None = None,
+    app_token: str | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+) -> Iterator[dict[str, Any]]:
+    """Yield every row of a Socrata dataset, paginating with ``$limit``/``$offset``.
+
+    Args:
+        dataset_id: Socrata 4x4 ID, e.g. ``"mhdd-npjx"``.
+        domain: Socrata host. Defaults to ``data.cms.gov``; pass
+            ``data.medicaid.gov`` for Medicaid datasets.
+        select: SoQL ``$select`` clause.
+        where: SoQL ``$where`` clause.
+        order: SoQL ``$order`` clause. Stable ordering is recommended for
+            multi-page reads to avoid duplicates if the dataset is updated
+            mid-iteration.
+        extra_params: Additional SoQL params to pass through (e.g. ``$q``).
+            Use sparingly — most filtering should go through ``where``.
+        app_token: Socrata app token. Falls back to the
+            ``CMS_API_SOCRATA_APP_TOKEN`` environment variable. Not strictly
+            required but recommended to avoid throttle limits.
+        batch_size: Page size. Socrata's max is 50,000; the default of 1,000
+            keeps memory and request size modest.
+
+    Yields:
+        One dict per row. Values are whatever Socrata returns (mostly strings).
+
+    """
+    resolved_token = _resolve_app_token(app_token)
+    headers: dict[str, str] | None = {"X-App-Token": resolved_token} if resolved_token else None
+    base_url = f"https://{domain}"
+    path = _socrata_path(dataset_id)
+
+    base_params: dict[str, str] = {}
+    if select is not None:
+        base_params["$select"] = select
+    if where is not None:
+        base_params["$where"] = where
+    if order is not None:
+        base_params["$order"] = order
+    if extra_params:
+        base_params.update(extra_params)
+
+    offset = 0
+    with build_client(base_url=base_url, headers=headers) as client:
+        while True:
+            page_params = {**base_params, "$limit": str(batch_size), "$offset": str(offset)}
+            page = request_json(client, "GET", path, params=page_params)
+            if not isinstance(page, list):
+                msg = f"expected JSON array from Socrata, got {type(page).__name__}"
+                raise TypeError(msg)
+            if not page:
+                return
+            yield from page
+            if len(page) < batch_size:
+                return
+            offset += batch_size
+
+
+class PartDSpendingByDrug(BaseModel):
+    """Subset of the Medicare Part D Spending by Drug schema (CMS dataset ``mhdd-npjx``).
+
+    The full schema has dozens of year-suffixed columns (``tot_spndng_2018``,
+    ``tot_dsg_unts_2019``, …); declaring every one would lock the library to
+    a specific year. We type the stable identifying columns and let the rest
+    flow through as extras.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    brnd_name: str | None = None
+    gnrc_name: str | None = None
+    mftr_name: str | None = None
+
+
+def iter_part_d_spending_by_drug(
+    *,
+    where: str | None = None,
+    app_token: str | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+) -> Iterator[PartDSpendingByDrug]:
+    """Iterate the Medicare Part D Spending by Drug dataset (CMS ``mhdd-npjx``).
+
+    Each yielded model has typed identifying fields plus untyped extras for
+    the year-specific spending and dosage columns.
+    """
+    rows = iter_dataset(
+        DATASET_PART_D_SPENDING_BY_DRUG,
+        domain=CMS_DOMAIN,
+        where=where,
+        app_token=app_token,
+        batch_size=batch_size,
+    )
+    for row in rows:
+        yield PartDSpendingByDrug.model_validate(row)

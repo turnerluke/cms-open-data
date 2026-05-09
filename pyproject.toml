@@ -7,7 +7,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Turner Luke", email = "turnermluke@gmail.com" }]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = ["cms-api"]
 
 [project.urls]
 Repository = "https://github.com/turnerluke/cms-open-data"
@@ -17,7 +17,10 @@ Issues = "https://github.com/turnerluke/cms-open-data/issues"
 dev = ["interrogate>=1.7.0", "pre-commit>=4.6.0", "pytest>=8.3.5", "pytest-cov>=6.0.0", "ruff>=0.15.12"]
 
 [tool.uv.workspace]
-members = []
+members = ["libs/cms_api"]
+
+[tool.uv.sources]
+cms-api = { workspace = true }
 
 [tool.pytest.ini_options]
 minversion = "8.3"

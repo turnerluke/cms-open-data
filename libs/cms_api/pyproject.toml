@@ -1,0 +1,50 @@
+[project]
+name = "cms-api"
+version = "0.1.0"
+description = "Sync client library for CMS, Medicaid, Healthcare.gov, and NPPES public APIs."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Turner Luke", email = "turnermluke@gmail.com" }]
+requires-python = ">=3.12"
+dependencies = ["httpx>=0.27.0", "pydantic>=2.6", "tenacity>=9.0.0"]
+
+[project.urls]
+Repository = "https://github.com/turnerluke/cms-open-data"
+Issues = "https://github.com/turnerluke/cms-open-data/issues"
+
+[dependency-groups]
+dev = ["mypy>=1.8.0", "pytest>=8.3.5", "pytest-cov>=6.0.0", "respx>=0.21.1"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cms_api"]
+
+[tool.pytest.ini_options]
+minversion = "8.3"
+testpaths = ["tests"]
+addopts = [
+    "--strict-markers",
+    "--tb=short",
+    "-v",
+    "--cov=src/cms_api",
+    "--cov-report=term-missing",
+    "--cov-branch",
+    "--cov-fail-under=80",
+]
+
+[tool.coverage.run]
+source = ["src/cms_api"]
+relative_files = true
+omit = ["*/tests/*", "*/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "raise NotImplementedError", "if TYPE_CHECKING:"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["src/cms_api"]
+plugins = ["pydantic.mypy"]
