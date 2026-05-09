@@ -1,0 +1,135 @@
+# ==============================================================================================================================
+# Claude Review
+# ==============================================================================================================================
+# Automated PR code review by Claude.
+#
+# Runs only after both Code Quality Check and Test workflows complete
+# successfully, posting inline review comments on the PR for correctness
+# issues, suppression abuse, missing tests, type quality, and out-of-scope
+# changes to repo standards.
+#
+# Gated on the deterministic checks in those workflows to avoid spending
+# review quota on code with style, format, secret, commit-message, or test
+# failures, and to skip duplicate noise on issues ruff or other linters
+# would catch.
+#
+# AUTHENTICATION:
+# - CLAUDE_CODE_OAUTH_TOKEN -> Claude Pro/Max subscription token
+#                              (rotate via `claude setup-token`)
+#
+# CONFIGURATION FILES:
+# - REVIEW.md  -> reviewer instructions (severity, what to flag/skip)
+# - CLAUDE.md  -> project context (stack, conventions, architecture)
+# ==============================================================================================================================
+---
+name: Claude Review
+
+on:
+  workflow_run:
+    workflows:
+      - Code Quality Check
+      - Test
+    types: [completed]
+
+# Cancel in-flight review runs on the same PR head when a newer upstream
+# workflow completes. Keyed on the head SHA from the triggering workflow.
+concurrency:
+  group: claude-review-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  review:
+    name: Claude Review
+    # Only run when:
+    # 1. The triggering workflow succeeded
+    # 2. It was triggered by a pull_request event
+    # 3. The OTHER required workflow has also succeeded for this same SHA
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+    steps:
+      - name: Verify both upstream workflows succeeded
+        id: gate
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const headSha = context.payload.workflow_run.head_sha;
+            const triggeringWorkflow = context.payload.workflow_run.name;
+            const required = ['Code Quality Check', 'Test'];
+
+            console.log(`Triggered by: ${triggeringWorkflow}`);
+            console.log(`Head SHA: ${headSha}`);
+
+            // Check the latest run of each required workflow at this SHA.
+            const results = {};
+            for (const name of required) {
+              const { data } = await github.rest.actions.listWorkflowRunsForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head_sha: headSha,
+                event: 'pull_request',
+                per_page: 20,
+              });
+              const runs = data.workflow_runs.filter(r => r.name === name);
+              if (runs.length === 0) {
+                console.log(`No run found for "${name}" at ${headSha}`);
+                results[name] = 'missing';
+                continue;
+              }
+              // Most recent first.
+              runs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+              const latest = runs[0];
+              console.log(`"${name}": status=${latest.status} conclusion=${latest.conclusion}`);
+              if (latest.status !== 'completed') {
+                results[name] = 'pending';
+              } else {
+                results[name] = latest.conclusion;
+              }
+            }
+
+            const allSuccess = required.every(n => results[n] === 'success');
+            const anyPending = required.some(n => results[n] === 'pending' || results[n] === 'missing');
+
+            if (allSuccess) {
+              core.setOutput('proceed', 'true');
+              console.log('All required workflows succeeded — proceeding with review.');
+            } else if (anyPending) {
+              core.setOutput('proceed', 'false');
+              console.log('Waiting on other workflow to complete — skipping this run.');
+            } else {
+              core.setOutput('proceed', 'false');
+              console.log('A required workflow did not succeed — skipping review.');
+            }
+
+      - name: Checkout PR head
+        if: steps.gate.outputs.proceed == 'true'
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Claude review
+        if: steps.gate.outputs.proceed == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Read REVIEW.md at the repo root and follow its instructions for
+            this review. CLAUDE.md provides project context — read it for
+            background on conventions and stack, but REVIEW.md takes
+            precedence for what to flag.
+
+            Read the diff, then read enough surrounding code to understand
+            context before flagging anything. Post findings as inline
+            review comments on the specific lines.
+          claude_args: |
+            --max-turns 8
+            --model claude-opus-4-7
