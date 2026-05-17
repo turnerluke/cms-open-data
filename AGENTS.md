@@ -67,3 +67,9 @@
   cannot end a turn while linters are unhappy.
 - A PostToolUse hook runs `ruff format` + `ruff check --fix` on any
   `.py` file just edited.
+
+## Ralph loops
+
+- `scripts/ralph/` contains tooling for running autonomous Ralph Wiggum
+  loops in sibling worktrees. See `scripts/ralph/README.md` for usage,
+  cost controls, and the one-time billing-cap prerequisite.
