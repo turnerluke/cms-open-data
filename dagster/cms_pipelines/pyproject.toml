@@ -13,7 +13,7 @@ Repository = "https://github.com/turnerluke/cms-open-data"
 Issues = "https://github.com/turnerluke/cms-open-data/issues"
 
 [dependency-groups]
-dev = ["dagster-dg-cli", "dagster-webserver"]
+dev = ["dagster-dg-cli", "dagster-webserver", "pytest>=8.3.5", "pytest-cov>=6.0.0"]
 
 [build-system]
 requires = ["hatchling"]
@@ -33,4 +33,20 @@ registry_modules = ["cms_pipelines.components.*"]
 [tool.pytest.ini_options]
 minversion = "8.3"
 testpaths = ["tests"]
-addopts = ["--strict-markers", "--tb=short", "-v"]
+addopts = [
+    "--strict-markers",
+    "--tb=short",
+    "-v",
+    "--cov=src/cms_pipelines",
+    "--cov-report=term-missing",
+    "--cov-branch",
+    "--cov-fail-under=80",
+]
+
+[tool.coverage.run]
+source = ["src/cms_pipelines"]
+relative_files = true
+omit = ["*/tests/*", "*/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "raise NotImplementedError", "if TYPE_CHECKING:"]
