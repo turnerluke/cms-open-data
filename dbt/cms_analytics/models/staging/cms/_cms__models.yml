@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: stg_cms__example
+    description: |
+      Placeholder staging model so `dbt parse` has at least one node to
+      compile. Demonstrates the three test families this project uses:
+      dbt built-in generics, `dbt_utils`, and `dbt_expectations`. Delete
+      once real staging models exist.
+    columns:
+      - name: id
+        description: "Synthetic primary key for the placeholder row."
+        data_tests:
+          - not_null
+          - unique
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 1
+          - dbt_expectations.expect_column_values_to_be_of_type:
+              arguments:
+                column_type: integer

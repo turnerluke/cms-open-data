@@ -80,3 +80,13 @@ RALPH/.state/
 *.pem
 *.crt
 *.pfx
+
+# ==============================================================================================================================
+# dbt / DuckDB
+# ==============================================================================================================================
+data/warehouse.duckdb
+data/warehouse.duckdb.wal
+dbt/cms_analytics/target/
+dbt/cms_analytics/dbt_packages/
+dbt/cms_analytics/logs/
+dbt/cms_analytics/.user.yml

@@ -1,0 +1,20 @@
+cms_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "../../data/warehouse.duckdb"
+      threads: 4
+      schema: main
+
+    ci:
+      type: duckdb
+      path: ":memory:"
+      threads: 2
+      schema: main
+
+    prod:
+      type: duckdb
+      path: "{{ env_var('CMS_WAREHOUSE_PATH', '../../data/warehouse.duckdb') }}"
+      threads: 4
+      schema: main
