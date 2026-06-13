@@ -20,6 +20,17 @@ if [[ ! -f pyproject.toml ]]; then
     exit 2
 fi
 
+# Capture members before the loop so a failed extraction (malformed
+# pyproject.toml, missing [tool.uv.workspace], etc.) trips `set -e`
+# instead of being swallowed by a process-substitution that just
+# feeds the while loop zero lines.
+members=$(uv run python -c "
+import tomllib, pathlib
+data = tomllib.loads(pathlib.Path('pyproject.toml').read_text())
+for m in data['tool']['uv']['workspace']['members']:
+    print(m)
+")
+
 rc=0
 while IFS= read -r member; do
     [[ -n "$member" ]] || continue
@@ -31,12 +42,5 @@ while IFS= read -r member; do
     if ! (cd "$member" && uv run pytest); then
         rc=1
     fi
-done < <(
-    uv run python -c "
-import tomllib, pathlib
-data = tomllib.loads(pathlib.Path('pyproject.toml').read_text())
-for m in data['tool']['uv']['workspace']['members']:
-    print(m)
-"
-)
+done <<< "$members"
 exit "$rc"
