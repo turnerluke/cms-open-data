@@ -151,13 +151,7 @@ jobs:
   # ============================================================================================================================
   # Validate dbt project
   # ============================================================================================================================
-  #
-  # Lightweight contract check for the cms_analytics dbt project:
-  #   - dbt deps   — install dbt_utils / dbt_expectations from packages.yml
-  #   - dbt parse  — validate ref()/source() graph + YAML schemas
-  #   - dbt compile — render every model to SQL against the `ci` profile (:memory: DuckDB)
-  #   - sqlfluff lint — SQL style enforcement, dbt templater
-  # No `dbt build` — Dagster hasn't populated bronze yet, so there's no real data to test against.
+  # TODO: promote to `dbt build` once Dagster lands Parquet under `data/bronze/`.
   dbt_validate:
     name: Validate dbt Project
     runs-on: ubuntu-latest
