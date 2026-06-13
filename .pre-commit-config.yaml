@@ -87,3 +87,22 @@ repos:
     rev: v0.13.0
     hooks:
       - id: ruff
+
+  # ============================================================================================================================
+  # SQL (dbt models)
+  # ============================================================================================================================
+  # Lints via the dbt subproject's uv venv so sqlfluff sees the same dbt-core +
+  # dbt-duckdb + dbt_packages/ a developer sees locally. Requires
+  # `uv run dbt deps --profiles-dir .` to have been run once in
+  # dbt/cms_analytics/ (documented in that project's README).
+  #
+  # sqlfluff refuses to load the dbt templater from a .sqlfluff in a
+  # subdirectory of the cwd, so the wrapper cd's into dbt/cms_analytics/ and
+  # rewrites the repo-relative paths pre-commit passes in.
+  - repo: local
+    hooks:
+      - id: sqlfluff-lint
+        name: sqlfluff lint (dbt models)
+        language: system
+        entry: bash -c 'cd dbt/cms_analytics && uv run sqlfluff lint "${@#dbt/cms_analytics/}"' --
+        files: ^dbt/cms_analytics/.*\.sql$
