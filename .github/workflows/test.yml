@@ -147,3 +147,45 @@ jobs:
         if: hashFiles(format('{0}/tests/**', matrix.project)) != ''
         working-directory: ./${{ matrix.project }}
         run: uv run pytest
+
+  # ============================================================================================================================
+  # Validate dbt project
+  # ============================================================================================================================
+  # TODO: promote to `dbt build` once Dagster lands Parquet under `data/bronze/`.
+  dbt_validate:
+    name: Validate dbt Project
+    runs-on: ubuntu-latest
+    needs: discover_projects
+    if: contains(fromJson(needs.discover_projects.outputs.changed_projects), 'dbt/cms_analytics')
+    defaults:
+      run:
+        working-directory: dbt/cms_analytics
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install subproject dependencies
+        run: uv sync --dev
+
+      - name: dbt deps
+        run: uv run dbt deps --profiles-dir .
+
+      - name: dbt parse
+        run: uv run dbt parse --profiles-dir . --target ci
+
+      - name: dbt compile
+        run: uv run dbt compile --profiles-dir . --target ci
+
+      - name: sqlfluff lint
+        run: uv run sqlfluff lint models/
