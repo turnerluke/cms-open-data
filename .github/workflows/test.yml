@@ -155,6 +155,8 @@ jobs:
   dbt_validate:
     name: Validate dbt Project
     runs-on: ubuntu-latest
+    needs: discover_projects
+    if: contains(fromJson(needs.discover_projects.outputs.changed_projects), 'dbt/cms_analytics')
     defaults:
       run:
         working-directory: dbt/cms_analytics
