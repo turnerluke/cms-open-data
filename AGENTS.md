@@ -68,6 +68,30 @@
 - A PostToolUse hook runs `ruff format` + `ruff check --fix` on any
   `.py` file just edited.
 
+## Local/CI parity
+
+The Stop hook also runs the same pytest invocations that CI runs in
+`.github/workflows/test.yml`, so a turn cannot end in a state CI would
+reject:
+
+- `uv run pytest tests/` — the `Repository Standards` suite (walks every
+  `pyproject.toml` and asserts coverage config, pytest config, project
+  layout, etc.).
+- `bash scripts/local-ci/run-subproject-tests.sh` — iterates each
+  member listed in the root pyproject's `[tool.uv.workspace].members`
+  and runs `uv run pytest` in each one that has a `tests/` directory.
+  This mirrors the `Test Subprojects` CI matrix.
+
+To run them manually before a push (the same commands the hook runs):
+
+```bash
+uv run pytest tests/
+bash scripts/local-ci/run-subproject-tests.sh
+```
+
+Hook config is cached at session start, so edits to
+`.claude/settings.json` only take effect in a new Claude Code session.
+
 ## Ralph loops
 
 - `scripts/ralph/` contains tooling for running autonomous Ralph Wiggum

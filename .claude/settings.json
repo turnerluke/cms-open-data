@@ -21,6 +21,18 @@
             "command": "cd \"$CLAUDE_PROJECT_DIR\" && uv run pre-commit run --all-files",
             "statusMessage": "pre-commit run --all-files",
             "timeout": 120
+          },
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && uv run pytest tests/",
+            "statusMessage": "pytest tests/ (repo standards)",
+            "timeout": 180
+          },
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && bash scripts/local-ci/run-subproject-tests.sh",
+            "statusMessage": "pytest per uv workspace member",
+            "timeout": 300
           }
         ]
       }
