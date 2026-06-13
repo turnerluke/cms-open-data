@@ -87,3 +87,19 @@ repos:
     rev: v0.13.0
     hooks:
       - id: ruff
+
+  # ============================================================================================================================
+  # SQL (dbt models)
+  # ============================================================================================================================
+  # Lints models via the dbt subproject's uv venv so sqlfluff sees the same
+  # dbt-core + dbt-duckdb + dbt_packages/ a developer sees locally. Requires
+  # `uv run dbt deps --profiles-dir .` to have been run once in
+  # dbt/cms_analytics/ (documented in that project's README).
+  - repo: local
+    hooks:
+      - id: sqlfluff-lint
+        name: sqlfluff lint (dbt models)
+        language: system
+        entry: uv run --directory dbt/cms_analytics sqlfluff lint models/
+        files: ^dbt/cms_analytics/.*\.sql$
+        pass_filenames: false
