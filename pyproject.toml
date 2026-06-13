@@ -17,11 +17,12 @@ Issues = "https://github.com/turnerluke/cms-open-data/issues"
 dev = ["interrogate>=1.7.0", "pre-commit>=4.6.0", "pytest>=8.3.5", "pytest-cov>=6.0.0", "ruff>=0.15.17"]
 
 [tool.uv.workspace]
-members = ["libs/cms_api", "dagster/cms_pipelines"]
+members = ["libs/cms_api", "dagster/cms_pipelines", "dbt/cms_analytics"]
 
 [tool.uv.sources]
 cms-api = { workspace = true }
 cms-pipelines = { workspace = true }
+cms-analytics = { workspace = true }
 
 [tool.pytest.ini_options]
 minversion = "8.3"

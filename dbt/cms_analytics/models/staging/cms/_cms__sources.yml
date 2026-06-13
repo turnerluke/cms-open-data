@@ -1,0 +1,16 @@
+version: 2
+
+sources:
+  - name: cms_bronze
+    description: |
+      Raw Parquet landed by the Dagster `cms_pipelines` project into
+      `data/bronze/`. dbt reads these files in place via DuckDB's
+      `external_location`; nothing is re-materialized at this layer.
+    meta:
+      external_location: "{{ env_var('CMS_BRONZE_ROOT', '../../data/bronze') }}/{name}/*.parquet"
+    tables:
+      - name: example
+        description: |
+          Placeholder source. Replace with real bronze drops (NPPES
+          providers, Part D drug spending, etc.) once the Dagster
+          ingestion assets land.
