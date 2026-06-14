@@ -36,7 +36,7 @@ class NppesProvidersConfig(Config):
 @asset(
     io_manager_key="parquet_io_manager",
     group_name="cms_raw",
-    compute_kind="cms_api",
+    compute_kind="python",
     description=(
         "NPPES NPI-2 (organizational) providers, swept state-by-state via the "
         "NPI Registry search endpoint. Each state subquery is capped at 1,200 "

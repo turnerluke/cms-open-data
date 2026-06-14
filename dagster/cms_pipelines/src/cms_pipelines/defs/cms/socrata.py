@@ -9,7 +9,7 @@ from dagster import AssetExecutionContext, asset
 @asset(
     io_manager_key="parquet_io_manager",
     group_name="cms_raw",
-    compute_kind="cms_api",
+    compute_kind="python",
     description=(
         "Full extract of CMS Socrata dataset `mhdd-npjx` (Medicare Part D "
         "Spending by Drug). One row per drug; year-suffixed spending and "
