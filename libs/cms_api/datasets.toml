@@ -105,3 +105,73 @@ source = "dkan_provider_data"
 dataset_id = "23ew-n7w9"
 description = "Dialysis Facility Listing by Facility."
 group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "nursing_home_provider_info"
+source = "dkan_provider_data"
+dataset_id = "4pq5-n9py"
+description = "Nursing Home Provider Information (Care Compare star ratings)."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "nursing_home_quality_measures_mds"
+source = "dkan_provider_data"
+dataset_id = "djen-97ju"
+description = "Nursing Home Quality Measures — MDS-based, facility level."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "nursing_home_quality_measures_claims"
+source = "dkan_provider_data"
+dataset_id = "ijh5-nb2v"
+description = "Nursing Home Quality Measures — Medicare claims-based."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "nursing_home_health_deficiencies"
+source = "dkan_provider_data"
+dataset_id = "r5ix-sfxw"
+description = "Nursing Home Health Deficiencies."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "nursing_home_penalties"
+source = "dkan_provider_data"
+dataset_id = "g6vv-u9sr"
+description = "Nursing Home Penalties."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "nursing_home_ownership"
+source = "dkan_provider_data"
+dataset_id = "y2hd-n93e"
+description = "Nursing Home Ownership."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "doctors_and_clinicians_national_downloadable"
+source = "dkan_provider_data"
+dataset_id = "mj5m-pzi6"
+description = "Doctors and Clinicians National Downloadable File."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "doctors_and_clinicians_facility_affiliations"
+source = "dkan_provider_data"
+dataset_id = "27ea-46a8"
+description = "Doctors and Clinicians Facility Affiliation Data."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "inpatient_rehabilitation_facility_general"
+source = "dkan_provider_data"
+dataset_id = "7t8x-u3ir"
+description = "Inpatient Rehabilitation Facility — General Information."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "long_term_care_hospital_general"
+source = "dkan_provider_data"
+dataset_id = "azum-44iv"
+description = "Long-Term Care Hospital — General Information."
+group = "cms_raw_provider_compare"

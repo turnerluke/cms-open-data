@@ -78,3 +78,54 @@ sources:
           Dialysis Facility Listing by Facility (DKAN dataset
           `23ew-n7w9`). Landed by the `cms_dialysis_facility_listing`
           Dagster asset.
+      - name: cms_nursing_home_provider_info
+        description: |
+          Nursing Home Provider Information / Care Compare star ratings
+          (DKAN dataset `4pq5-n9py`). Landed by the
+          `cms_nursing_home_provider_info` Dagster asset.
+      - name: cms_nursing_home_quality_measures_mds
+        description: |
+          Nursing Home Quality Measures — MDS-based, facility level
+          (DKAN dataset `djen-97ju`). Landed by the
+          `cms_nursing_home_quality_measures_mds` Dagster asset.
+      - name: cms_nursing_home_quality_measures_claims
+        description: |
+          Nursing Home Quality Measures — Medicare claims-based (DKAN
+          dataset `ijh5-nb2v`). Landed by the
+          `cms_nursing_home_quality_measures_claims` Dagster asset.
+      - name: cms_nursing_home_health_deficiencies
+        description: |
+          Nursing Home Health Deficiencies (DKAN dataset `r5ix-sfxw`).
+          Landed by the `cms_nursing_home_health_deficiencies` Dagster
+          asset.
+      - name: cms_nursing_home_penalties
+        description: |
+          Nursing Home Penalties (DKAN dataset `g6vv-u9sr`). Landed by
+          the `cms_nursing_home_penalties` Dagster asset.
+      - name: cms_nursing_home_ownership
+        description: |
+          Nursing Home Ownership (DKAN dataset `y2hd-n93e`). Landed by
+          the `cms_nursing_home_ownership` Dagster asset.
+      - name: cms_doctors_and_clinicians_national_downloadable
+        description: |
+          Doctors and Clinicians National Downloadable File (DKAN
+          dataset `mj5m-pzi6`). Landed by the
+          `cms_doctors_and_clinicians_national_downloadable` Dagster
+          asset.
+      - name: cms_doctors_and_clinicians_facility_affiliations
+        description: |
+          Doctors and Clinicians Facility Affiliation Data (DKAN
+          dataset `27ea-46a8`). Landed by the
+          `cms_doctors_and_clinicians_facility_affiliations` Dagster
+          asset.
+      - name: cms_inpatient_rehabilitation_facility_general
+        description: |
+          Inpatient Rehabilitation Facility — General Information
+          (DKAN dataset `7t8x-u3ir`). Landed by the
+          `cms_inpatient_rehabilitation_facility_general` Dagster
+          asset.
+      - name: cms_long_term_care_hospital_general
+        description: |
+          Long-Term Care Hospital — General Information (DKAN dataset
+          `azum-44iv`). Landed by the
+          `cms_long_term_care_hospital_general` Dagster asset.
