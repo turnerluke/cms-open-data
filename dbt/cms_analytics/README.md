@@ -5,9 +5,8 @@ local DuckDB file at `../../data/warehouse.duckdb`.
 
 ## Layout
 
-- `models/staging/` — typed/renamed columns over raw bronze Parquet
-  (sources defined via DuckDB `external_location` against
-  `../../data/bronze/`).
+- `models/staging/` — typed/renamed columns over raw Parquet (sources
+  defined via DuckDB `external_location` against `../../data/raw/`).
 - `models/intermediate/` — ephemeral joins/reshape helpers.
 - `models/marts/` — analytical tables (core entities + subject-area
   marts).

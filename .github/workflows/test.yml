@@ -151,7 +151,7 @@ jobs:
   # ============================================================================================================================
   # Validate dbt project
   # ============================================================================================================================
-  # TODO: promote to `dbt build` once Dagster lands Parquet under `data/bronze/`.
+  # TODO: promote to `dbt build` once Dagster lands Parquet under `data/raw/`.
   dbt_validate:
     name: Validate dbt Project
     runs-on: ubuntu-latest
