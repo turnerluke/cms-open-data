@@ -1,5 +1,6 @@
 """Sync client library for CMS, Medicaid, Healthcare.gov, and NPPES public APIs."""
 
+from ._types import JsonObject, JsonValue
 from .healthcare_gov import Article, GlossaryTerm, get_articles, get_glossary
 from .nppes import NppesAddress, NppesBasic, NppesProvider, NppesTaxonomy, get_provider_by_npi, search_providers
 from .socrata import (
@@ -18,6 +19,8 @@ __all__ = [
     "MEDICAID_DOMAIN",
     "Article",
     "GlossaryTerm",
+    "JsonObject",
+    "JsonValue",
     "NppesAddress",
     "NppesBasic",
     "NppesProvider",
