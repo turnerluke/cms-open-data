@@ -1,7 +1,6 @@
 """Tests for the NPPES client."""
 
-from typing import Any
-
+from cms_api import JsonObject
 from cms_api.nppes import NPPES_BASE_URL, NPPES_PATH, get_provider_by_npi, search_providers
 import httpx
 import respx
@@ -12,7 +11,7 @@ import pytest
 NPPES_URL = f"{NPPES_BASE_URL}{NPPES_PATH}"
 
 
-def _provider_payload(npi: str, last_name: str = "Doe") -> dict[str, Any]:
+def _provider_payload(npi: str, last_name: str = "Doe") -> JsonObject:
     """Minimal NPPES result row."""
     return {
         "number": npi,
