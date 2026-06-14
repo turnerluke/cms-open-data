@@ -155,6 +155,15 @@ def test_iter_dataset_rejects_non_array_payload() -> None:
 
 
 @respx.mock
+def test_iter_dataset_rejects_non_object_row() -> None:
+    """Socrata rows are JSON objects; a scalar row would mean the response is malformed."""
+    respx.get(f"{CMS_BASE}{PART_D_PATH}").respond(json=["not-a-dict"])
+
+    with pytest.raises(TypeError, match="expected Socrata row to be a JSON object"):
+        list(iter_dataset(DATASET_PART_D_SPENDING_BY_DRUG, batch_size=10))
+
+
+@respx.mock
 def test_iter_dataset_reads_app_token_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """The Socrata app token defaults to the env var when not passed in."""
     monkeypatch.setenv("CMS_API_SOCRATA_APP_TOKEN", "env-token")

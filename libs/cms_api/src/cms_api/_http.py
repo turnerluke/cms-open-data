@@ -18,7 +18,7 @@ behaviour without code changes:
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
@@ -26,6 +26,8 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from ._types import JsonValue
 
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
@@ -99,8 +101,8 @@ def request_json(
     method: str,
     url: str,
     *,
-    params: Mapping[str, Any] | None = None,
-) -> Any:  # noqa: ANN401  -- caller knows whether the endpoint returns dict or list
+    params: Mapping[str, str] | None = None,
+) -> JsonValue:
     """Issue an HTTP request and return parsed JSON.
 
     Retries on transport errors and HTTP 429/5xx with exponential backoff;
@@ -117,9 +119,15 @@ def request_json(
         wait=wait_exponential(multiplier=wait_multiplier, min=0, max=DEFAULT_RETRY_WAIT_MAX),
         reraise=True,
     )
-    def _do() -> Any:  # noqa: ANN401
+    def _do() -> JsonValue:
         response = client.request(method, url, params=dict(params) if params else None)
         response.raise_for_status()
-        return response.json()
+        # httpx.Response.json() returns Any; rebind through a typed local so
+        # JsonValue propagates out instead of silently widening to Any.
+        parsed: JsonValue = response.json()
+        return parsed
 
-    return _do()
+    # tenacity's @retry decorator drops the inner function's return type;
+    # rebind again at the call site for the same reason.
+    result: JsonValue = _do()
+    return result
