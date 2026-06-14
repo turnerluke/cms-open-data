@@ -1,6 +1,13 @@
 """Tests for the Healthcare.gov content client."""
 
-from cms_api.healthcare_gov import ARTICLES_PATH, GLOSSARY_PATH, HEALTHCARE_GOV_BASE_URL, get_articles, get_glossary
+from cms_api.healthcare_gov import (
+    ARTICLES_PATH,
+    GLOSSARY_PATH,
+    HEALTHCARE_GOV_BASE_URL,
+    get_articles,
+    get_glossary,
+    get_static_json,
+)
 import httpx
 import respx
 
@@ -111,3 +118,37 @@ def test_get_articles_skips_non_dict_entries() -> None:
 
     assert len(articles) == 1
     assert articles[0].title == "Real article"
+
+
+@respx.mock
+def test_get_static_json_returns_records_from_bare_array() -> None:
+    """`get_static_json` accepts a bare JSON array and returns the records as-is."""
+    respx.get(GLOSSARY_URL).respond(
+        json=[{"title": "Premium"}, {"title": "Deductible"}],
+    )
+
+    rows = get_static_json(GLOSSARY_PATH)
+
+    assert rows == [{"title": "Premium"}, {"title": "Deductible"}]
+
+
+@respx.mock
+def test_get_static_json_uses_basename_for_envelope_key() -> None:
+    """For a wrapped payload, `get_static_json` derives the envelope key from the path basename."""
+    respx.get(ARTICLES_URL).respond(
+        json={"articles": [{"title": "Enroll"}]},
+    )
+
+    rows = get_static_json(ARTICLES_PATH)
+
+    assert rows == [{"title": "Enroll"}]
+
+
+@respx.mock
+def test_get_static_json_filters_non_object_entries() -> None:
+    """Non-dict entries in the records list are dropped silently."""
+    respx.get(GLOSSARY_URL).respond(json=[{"title": "Real"}, 42, "junk"])
+
+    rows = get_static_json(GLOSSARY_PATH)
+
+    assert rows == [{"title": "Real"}]

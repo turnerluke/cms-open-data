@@ -1,0 +1,32 @@
+# CMS open-data dataset registry.
+#
+# One [[dataset]] entry per Dagster asset. The generator in
+# `dagster/cms_pipelines/src/cms_pipelines/defs/cms/registry_assets.py`
+# emits one `@asset` named `cms_<key>` per row here.
+#
+# Required fields: key, source, description, group.
+# Source-specific required fields:
+#   - socrata: dataset_id (Socrata 4x4)
+#   - healthcare_gov: path (e.g. "/api/glossary.json")
+# Cross-field validation lives in `cms_api.registry.DatasetSpec`.
+
+[[dataset]]
+key = "part_d_spending_by_drug"
+source = "socrata"
+dataset_id = "mhdd-npjx"
+description = "Medicare Part D Spending by Drug (CMS Socrata mhdd-npjx)."
+group = "cms_raw"
+
+[[dataset]]
+key = "healthcare_gov_glossary"
+source = "healthcare_gov"
+path = "/api/glossary.json"
+description = "Healthcare.gov consumer glossary."
+group = "cms_raw"
+
+[[dataset]]
+key = "healthcare_gov_articles"
+source = "healthcare_gov"
+path = "/api/articles.json"
+description = "Healthcare.gov consumer articles."
+group = "cms_raw"

@@ -1,15 +1,19 @@
 """Materialization tests for the `cms_*` raw-extraction assets.
 
 The `cms_api` callables that each asset depends on are monkey-patched to
-return synthetic Pydantic records, so these tests cover the assets'
-pyarrow + IO-manager wiring without touching the public CMS APIs.
+return synthetic records, so these tests cover the assets' pyarrow + IO-manager
+wiring without touching the public CMS APIs.
+
+Registry-driven assets are tested via the `registry_assets` factory module
+(one materialization per row in `datasets.toml`); the hand-written NPPES
+sweep keeps its own targeted tests below.
 """
 
 from collections.abc import Iterator
 from pathlib import Path
 
-from cms_api import Article, GlossaryTerm, NppesProvider, PartDSpendingByDrug
-from cms_pipelines.defs.cms import healthcare_gov, nppes, socrata
+from cms_api import DatasetSpec, JsonObject, NppesProvider, load_registry
+from cms_pipelines.defs.cms import nppes, registry_assets
 from cms_pipelines.defs.io_managers.parquet import ParquetIOManager
 import pyarrow.parquet as pq
 
@@ -23,9 +27,9 @@ def _io_manager(tmp_path: Path) -> ParquetIOManager:
     return ParquetIOManager(root=str(tmp_path))
 
 
-def _materialize(asset: AssetsDefinition, tmp_path: Path) -> ExecuteInProcessResult:
-    """Materialize `asset` against a fresh `ParquetIOManager` rooted at `tmp_path`."""
-    return materialize([asset], resources={"parquet_io_manager": _io_manager(tmp_path)})
+def _materialize(asset_def: AssetsDefinition, tmp_path: Path) -> ExecuteInProcessResult:
+    """Materialize `asset_def` against a fresh `ParquetIOManager` rooted at `tmp_path`."""
+    return materialize([asset_def], resources={"parquet_io_manager": _io_manager(tmp_path)})
 
 
 def _materialize_nppes(tmp_path: Path, *, states: list[str]) -> ExecuteInProcessResult:
@@ -44,102 +48,106 @@ def _only_parquet(tmp_path: Path, asset_name: str) -> Path:
     return files[0]
 
 
-def test_part_d_asset_materializes_to_parquet(
+def _registry_asset(spec: DatasetSpec) -> AssetsDefinition:
+    """Look up the generated asset for `spec` by its canonical `cms_<key>` name."""
+    return getattr(registry_assets, f"cms_{spec.key}")
+
+
+def test_one_asset_emitted_per_registry_row() -> None:
+    """Every registry row should resolve to an AssetsDefinition with the expected key."""
+    for spec in load_registry():
+        asset_def = _registry_asset(spec)
+        assert isinstance(asset_def, AssetsDefinition)
+        assert asset_def.key.path[-1] == f"cms_{spec.key}"
+
+
+def test_socrata_registry_asset_materializes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """The Part D asset writes one Parquet file with all rows from the upstream iterator."""
-    sample = [
-        PartDSpendingByDrug.model_validate(
-            {"brnd_name": "DrugA", "gnrc_name": "drug-a", "mftr_name": "AcmePharma"},
-        ),
-        PartDSpendingByDrug.model_validate(
-            {"brnd_name": "DrugB", "gnrc_name": "drug-b", "mftr_name": "BetaPharma"},
-        ),
+    """A Socrata-sourced registry asset lands rows from `iter_dataset` as Parquet."""
+    sample: list[JsonObject] = [
+        {"brnd_name": "DrugA", "gnrc_name": "drug-a"},
+        {"brnd_name": "DrugB", "gnrc_name": "drug-b"},
     ]
-    monkeypatch.setattr(socrata, "iter_part_d_spending_by_drug", lambda: iter(sample))
 
-    result = _materialize(socrata.cms_part_d_spending_by_drug, tmp_path)
+    def fake_iter_dataset(dataset_id: str, *, domain: str) -> Iterator[JsonObject]:
+        del dataset_id, domain
+        return iter(sample)
+
+    monkeypatch.setattr(registry_assets, "iter_dataset", fake_iter_dataset)
+
+    socrata_specs = [s for s in load_registry() if s.source == "socrata"]
+    assert socrata_specs, "expected at least one socrata-sourced registry row"
+    spec = socrata_specs[0]
+    asset_def = _registry_asset(spec)
+
+    result = _materialize(asset_def, tmp_path)
 
     assert result.success
-    table = pq.read_table(_only_parquet(tmp_path, "cms_part_d_spending_by_drug"))
+    table = pq.read_table(_only_parquet(tmp_path, f"cms_{spec.key}"))
     assert table.num_rows == 2
     assert "brnd_name" in table.column_names
 
 
-def test_part_d_asset_fails_on_empty_extract(
+def test_healthcare_gov_registry_asset_materializes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """An empty Part D extract fails loudly rather than silently landing an empty Parquet."""
+    """A healthcare_gov-sourced registry asset lands records from `get_static_json`."""
+    captured_paths: list[str] = []
 
-    def _empty() -> Iterator[PartDSpendingByDrug]:
-        return iter([])
+    def fake_get_static_json(path: str) -> list[JsonObject]:
+        captured_paths.append(path)
+        return [{"title": "term", "slug": "term"}]
 
-    monkeypatch.setattr(socrata, "iter_part_d_spending_by_drug", _empty)
+    monkeypatch.setattr(registry_assets, "get_static_json", fake_get_static_json)
 
-    with pytest.raises(Exception, match="zero rows"):
-        _materialize(socrata.cms_part_d_spending_by_drug, tmp_path)
+    hgov_specs = [s for s in load_registry() if s.source == "healthcare_gov"]
+    assert hgov_specs, "expected at least one healthcare_gov-sourced registry row"
+    spec = hgov_specs[0]
+    asset_def = _registry_asset(spec)
 
-
-def test_glossary_asset_materializes(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """Healthcare.gov glossary terms land in a single Parquet."""
-    terms = [
-        GlossaryTerm.model_validate({"title": "Premium", "slug": "premium", "content": "..."}),
-        GlossaryTerm.model_validate({"title": "Deductible", "slug": "deductible", "content": "..."}),
-    ]
-    monkeypatch.setattr(healthcare_gov, "get_glossary", lambda: terms)
-
-    result = _materialize(healthcare_gov.cms_healthcare_gov_glossary, tmp_path)
+    result = _materialize(asset_def, tmp_path)
 
     assert result.success
-    table = pq.read_table(_only_parquet(tmp_path, "cms_healthcare_gov_glossary"))
-    assert table.num_rows == 2
+    assert captured_paths == [spec.path]
+    table = pq.read_table(_only_parquet(tmp_path, f"cms_{spec.key}"))
+    assert table.num_rows == 1
     assert "title" in table.column_names
 
 
-def test_glossary_asset_fails_on_empty_corpus(
+def test_registry_asset_fails_on_empty_socrata_extract(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """An empty glossary corpus is treated as an extraction failure."""
-    monkeypatch.setattr(healthcare_gov, "get_glossary", list)
+    """An empty Socrata response trips the zero-row guard."""
 
-    with pytest.raises(Exception, match="zero terms"):
-        _materialize(healthcare_gov.cms_healthcare_gov_glossary, tmp_path)
+    def empty_iter(dataset_id: str, *, domain: str) -> Iterator[JsonObject]:
+        del dataset_id, domain
+        return iter([])
+
+    monkeypatch.setattr(registry_assets, "iter_dataset", empty_iter)
+
+    spec = next(s for s in load_registry() if s.source == "socrata")
+    asset_def = _registry_asset(spec)
+
+    with pytest.raises(Exception, match="zero rows"):
+        _materialize(asset_def, tmp_path)
 
 
-def test_articles_asset_materializes(
+def test_registry_asset_fails_on_empty_healthcare_gov_extract(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Healthcare.gov articles land in a single Parquet."""
-    articles = [
-        Article.model_validate(
-            {"title": "Enrollment", "slug": "enrollment", "url": "/enrollment", "date": "2026-01-15"},
-        ),
-    ]
-    monkeypatch.setattr(healthcare_gov, "get_articles", lambda: articles)
+    """An empty healthcare.gov response trips the zero-row guard."""
+    monkeypatch.setattr(registry_assets, "get_static_json", lambda _path: [])
 
-    result = _materialize(healthcare_gov.cms_healthcare_gov_articles, tmp_path)
+    spec = next(s for s in load_registry() if s.source == "healthcare_gov")
+    asset_def = _registry_asset(spec)
 
-    assert result.success
-    table = pq.read_table(_only_parquet(tmp_path, "cms_healthcare_gov_articles"))
-    assert table.num_rows == 1
-
-
-def test_articles_asset_fails_on_empty_corpus(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """An empty article corpus is treated as an extraction failure."""
-    monkeypatch.setattr(healthcare_gov, "get_articles", list)
-
-    with pytest.raises(Exception, match="zero records"):
-        _materialize(healthcare_gov.cms_healthcare_gov_articles, tmp_path)
+    with pytest.raises(Exception, match="zero rows"):
+        _materialize(asset_def, tmp_path)
 
 
 def test_nppes_state_sweep_collects_per_state(
