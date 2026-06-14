@@ -1,6 +1,6 @@
-"""Tests for the cms raw-extraction resource registration."""
+"""Tests for the shared resource registration."""
 
-from cms_pipelines.defs.cms.resources import CMS_RAW_ROOT_ENV, _resolve_raw_root, cms_resources
+from cms_pipelines.defs.resources import CMS_RAW_ROOT_ENV, _resolve_raw_root, shared_resources
 
 from dagster import Definitions
 
@@ -23,10 +23,10 @@ def test_resolve_raw_root_falls_back_to_repo_default(monkeypatch: pytest.MonkeyP
     assert resolved.endswith("data/raw")
 
 
-def test_cms_resources_registers_io_manager() -> None:
-    """The `@definitions` factory exposes the `cms_raw_io_manager` resource."""
-    defs = cms_resources()
+def test_shared_resources_registers_parquet_io_manager() -> None:
+    """The `@definitions` factory exposes the `parquet_io_manager` resource."""
+    defs = shared_resources()
 
     assert isinstance(defs, Definitions)
     assert defs.resources is not None
-    assert "cms_raw_io_manager" in defs.resources
+    assert "parquet_io_manager" in defs.resources

@@ -7,7 +7,7 @@ from dagster import AssetExecutionContext, asset
 
 
 @asset(
-    io_manager_key="cms_raw_io_manager",
+    io_manager_key="parquet_io_manager",
     group_name="cms_raw",
     compute_kind="cms_api",
     description=("Healthcare.gov glossary terms — full corpus from `https://www.healthcare.gov/api/glossary.json`."),
@@ -23,7 +23,7 @@ def cms_healthcare_gov_glossary(context: AssetExecutionContext) -> pa.Table:
 
 
 @asset(
-    io_manager_key="cms_raw_io_manager",
+    io_manager_key="parquet_io_manager",
     group_name="cms_raw",
     compute_kind="cms_api",
     description=("Healthcare.gov article corpus — full extract from `https://www.healthcare.gov/api/articles.json`."),

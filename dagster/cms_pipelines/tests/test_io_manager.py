@@ -1,8 +1,8 @@
-"""Unit tests for :class:`RawParquetIOManager`."""
+"""Unit tests for :class:`ParquetIOManager`."""
 
 from pathlib import Path
 
-from cms_pipelines.defs.cms.io_manager import RawParquetIOManager
+from cms_pipelines.defs.io_managers.parquet import ParquetIOManager
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -18,7 +18,7 @@ def _two_row_table() -> pa.Table:
 
 def test_handle_output_writes_parquet_under_asset_dir(tmp_path: Path) -> None:
     """Outputs land at `<root>/<asset_name>/<run_id>.parquet`."""
-    io_manager = RawParquetIOManager(root=str(tmp_path))
+    io_manager = ParquetIOManager(root=str(tmp_path))
     ctx = build_output_context(asset_key=AssetKey("cms_demo"), run_id="run-1")
 
     io_manager.handle_output(ctx, _two_row_table())
@@ -30,7 +30,7 @@ def test_handle_output_writes_parquet_under_asset_dir(tmp_path: Path) -> None:
 
 def test_handle_output_rejects_non_table(tmp_path: Path) -> None:
     """Anything other than a pyarrow.Table is rejected loudly."""
-    io_manager = RawParquetIOManager(root=str(tmp_path))
+    io_manager = ParquetIOManager(root=str(tmp_path))
     ctx = build_output_context(asset_key=AssetKey("cms_demo"), run_id="run-1")
 
     with pytest.raises(TypeError, match=r"only handles pyarrow\.Table"):
@@ -39,7 +39,7 @@ def test_handle_output_rejects_non_table(tmp_path: Path) -> None:
 
 def test_load_input_reads_back_what_handle_output_wrote(tmp_path: Path) -> None:
     """A write followed by a read returns the original rows and columns."""
-    io_manager = RawParquetIOManager(root=str(tmp_path))
+    io_manager = ParquetIOManager(root=str(tmp_path))
     out_ctx = build_output_context(asset_key=AssetKey("cms_demo"), run_id="run-1")
     in_ctx = build_input_context(asset_key=AssetKey("cms_demo"))
 
@@ -52,7 +52,7 @@ def test_load_input_reads_back_what_handle_output_wrote(tmp_path: Path) -> None:
 
 def test_load_input_raises_when_directory_empty(tmp_path: Path) -> None:
     """Reading an asset with no landed Parquet is a hard error, not a silent empty."""
-    io_manager = RawParquetIOManager(root=str(tmp_path))
+    io_manager = ParquetIOManager(root=str(tmp_path))
     in_ctx = build_input_context(asset_key=AssetKey("cms_demo"))
 
     with pytest.raises(FileNotFoundError):
@@ -64,7 +64,7 @@ def test_handle_output_creates_parent_dir_if_missing(tmp_path: Path) -> None:
     nested = tmp_path / "nested" / "raw"
     assert not nested.exists()
 
-    io_manager = RawParquetIOManager(root=str(nested))
+    io_manager = ParquetIOManager(root=str(nested))
     ctx = build_output_context(asset_key=AssetKey("cms_demo"), run_id="run-1")
     io_manager.handle_output(ctx, _two_row_table())
 

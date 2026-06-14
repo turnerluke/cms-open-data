@@ -1,9 +1,13 @@
-"""Parquet IO manager for raw CMS extractions.
+"""Parquet IO manager.
 
-Outputs are written to ``<raw_root>/<asset_name>/<run_id>.parquet``. The asset
-name is the last component of ``context.asset_key.path`` so the on-disk layout
-matches the directory glob the ``cms_analytics`` dbt project reads via
-DuckDB's ``external_location`` (``<raw_root>/<table>/*.parquet``).
+Writes ``pyarrow.Table`` outputs to ``<root>/<asset_name>/<run_id>.parquet``
+and reads them back as one concatenated table. The asset name is the last
+component of ``context.asset_key.path``; the per-run filename means multiple
+materializations of the same asset accumulate side-by-side, which matches
+the directory-glob shape DuckDB's ``external_location`` expects.
+
+The class is layer- and source-neutral: callers pick the on-disk root when
+they register the resource.
 """
 
 from __future__ import annotations
@@ -16,7 +20,7 @@ import pyarrow.parquet as pq
 from dagster import ConfigurableIOManager, InputContext, OutputContext
 
 
-class RawParquetIOManager(ConfigurableIOManager):
+class ParquetIOManager(ConfigurableIOManager):
     """Writes ``pyarrow.Table`` asset outputs to ``<root>/<asset>/<run_id>.parquet``."""
 
     root: str
@@ -27,7 +31,7 @@ class RawParquetIOManager(ConfigurableIOManager):
     def handle_output(self, context: OutputContext, obj: object) -> None:
         """Write ``obj`` as a Parquet file and emit row-count + path metadata."""
         if not isinstance(obj, pa.Table):
-            msg = f"RawParquetIOManager only handles pyarrow.Table; got {type(obj).__name__}"
+            msg = f"ParquetIOManager only handles pyarrow.Table; got {type(obj).__name__}"
             raise TypeError(msg)
         asset_dir = self._asset_dir(context)
         asset_dir.mkdir(parents=True, exist_ok=True)

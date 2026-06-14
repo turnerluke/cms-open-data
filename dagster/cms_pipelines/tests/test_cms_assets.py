@@ -11,7 +11,7 @@ from typing import Any
 
 from cms_api import Article, GlossaryTerm, NppesProvider, PartDSpendingByDrug
 from cms_pipelines.defs.cms import healthcare_gov, nppes, socrata
-from cms_pipelines.defs.cms.io_manager import RawParquetIOManager
+from cms_pipelines.defs.io_managers.parquet import ParquetIOManager
 import pyarrow.parquet as pq
 
 from dagster import AssetsDefinition, ExecuteInProcessResult, materialize
@@ -26,10 +26,10 @@ def _materialize(
     run_config: dict[str, Any] | None = None,
     raise_on_error: bool = True,
 ) -> ExecuteInProcessResult:
-    """Materialize `asset` against a fresh `RawParquetIOManager` rooted at `tmp_path`."""
+    """Materialize `asset` against a fresh `ParquetIOManager` rooted at `tmp_path`."""
     return materialize(
         [asset],
-        resources={"cms_raw_io_manager": RawParquetIOManager(root=str(tmp_path))},
+        resources={"parquet_io_manager": ParquetIOManager(root=str(tmp_path))},
         run_config=run_config or {},
         raise_on_error=raise_on_error,
     )

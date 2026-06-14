@@ -7,7 +7,7 @@ from dagster import AssetExecutionContext, asset
 
 
 @asset(
-    io_manager_key="cms_raw_io_manager",
+    io_manager_key="parquet_io_manager",
     group_name="cms_raw",
     compute_kind="cms_api",
     description=(
