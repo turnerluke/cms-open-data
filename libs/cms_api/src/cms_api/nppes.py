@@ -18,11 +18,14 @@ query, not paginate harder).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from ._types import JsonObject, JsonValue
+
 
 from ._http import build_client, request_json
 from pydantic import BaseModel, ConfigDict, Field
@@ -170,7 +173,7 @@ def search_providers(  # noqa: PLR0913 -- public API; explicit kwargs are cleare
                 return
 
 
-def _extract_results(payload: Any) -> list[dict[str, Any]]:  # noqa: ANN401 -- API payload shape
+def _extract_results(payload: JsonValue) -> list[JsonObject]:
     """Pull the ``results`` list out of an NPPES response payload."""
     if not isinstance(payload, dict):
         msg = f"expected JSON object from NPPES, got {type(payload).__name__}"
@@ -179,4 +182,10 @@ def _extract_results(payload: Any) -> list[dict[str, Any]]:  # noqa: ANN401 -- A
     if not isinstance(results, list):
         msg = f"expected 'results' to be a list, got {type(results).__name__}"
         raise TypeError(msg)
-    return results
+    typed_results: list[JsonObject] = []
+    for row in results:
+        if not isinstance(row, dict):
+            msg = f"expected NPPES result row to be a JSON object, got {type(row).__name__}"
+            raise TypeError(msg)
+        typed_results.append(row)
+    return typed_results

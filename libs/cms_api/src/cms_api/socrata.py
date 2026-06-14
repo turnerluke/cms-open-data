@@ -18,7 +18,7 @@ so a single client covers both — callers pick the domain.
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ._http import build_client, request_json
 from pydantic import BaseModel, ConfigDict
@@ -26,6 +26,8 @@ from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
+
+    from ._types import JsonObject, JsonValue
 
 
 CMS_DOMAIN = "data.cms.gov"
@@ -49,6 +51,20 @@ def _resolve_app_token(app_token: str | None) -> str | None:
     return os.environ.get("CMS_API_SOCRATA_APP_TOKEN")
 
 
+def _validate_socrata_page(page: JsonValue) -> list[JsonObject]:
+    """Narrow a Socrata page payload to a list of JSON objects."""
+    if not isinstance(page, list):
+        msg = f"expected JSON array from Socrata, got {type(page).__name__}"
+        raise TypeError(msg)
+    rows: list[JsonObject] = []
+    for row in page:
+        if not isinstance(row, dict):
+            msg = f"expected Socrata row to be a JSON object, got {type(row).__name__}"
+            raise TypeError(msg)
+        rows.append(row)
+    return rows
+
+
 def iter_dataset(  # noqa: PLR0913 -- public API; keyword-only args make explicit kwargs preferable to a params object
     dataset_id: str,
     *,
@@ -59,7 +75,7 @@ def iter_dataset(  # noqa: PLR0913 -- public API; keyword-only args make explici
     extra_params: Mapping[str, str] | None = None,
     app_token: str | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
-) -> Iterator[dict[str, Any]]:
+) -> Iterator[JsonObject]:
     """Yield every row of a Socrata dataset, paginating with ``$limit``/``$offset``.
 
     Args:
@@ -103,13 +119,11 @@ def iter_dataset(  # noqa: PLR0913 -- public API; keyword-only args make explici
         while True:
             page_params = {**base_params, "$limit": str(batch_size), "$offset": str(offset)}
             page = request_json(client, "GET", path, params=page_params)
-            if not isinstance(page, list):
-                msg = f"expected JSON array from Socrata, got {type(page).__name__}"
-                raise TypeError(msg)
-            if not page:
+            rows = _validate_socrata_page(page)
+            if not rows:
                 return
-            yield from page
-            if len(page) < batch_size:
+            yield from rows
+            if len(rows) < batch_size:
                 return
             offset += batch_size
 
