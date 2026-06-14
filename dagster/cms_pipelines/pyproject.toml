@@ -6,14 +6,14 @@ readme = "README.md"
 license = "MIT"
 authors = [{ name = "Turner Luke", email = "turnermluke@gmail.com" }]
 requires-python = ">=3.13"
-dependencies = ["dagster==1.13.7", "dagster-dbt>=0.29.7", "dbt-duckdb>=1.10.1"]
+dependencies = ["cms-api", "dagster==1.13.7", "dagster-dbt>=0.29.7", "dbt-duckdb>=1.10.1", "pyarrow>=18.0.0"]
 
 [project.urls]
 Repository = "https://github.com/turnerluke/cms-open-data"
 Issues = "https://github.com/turnerluke/cms-open-data/issues"
 
 [dependency-groups]
-dev = ["dagster-dg-cli", "dagster-webserver", "pytest>=8.3.5", "pytest-cov>=6.0.0"]
+dev = ["dagster-dg-cli", "dagster-webserver", "pytest>=8.3.5", "pytest-cov>=6.0.0", "respx>=0.21.1"]
 
 [build-system]
 requires = ["hatchling"]

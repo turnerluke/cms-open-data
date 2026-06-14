@@ -1,16 +1,30 @@
 version: 2
 
 sources:
-  - name: cms_bronze
+  - name: cms_raw
     description: |
       Raw Parquet landed by the Dagster `cms_pipelines` project into
-      `data/bronze/`. dbt reads these files in place via DuckDB's
+      `data/raw/`. dbt reads these files in place via DuckDB's
       `external_location`; nothing is re-materialized at this layer.
     meta:
-      external_location: "{{ env_var('CMS_BRONZE_ROOT', '../../data/bronze') }}/{name}/*.parquet"
+      external_location: "{{ env_var('CMS_RAW_ROOT', '../../data/raw') }}/{name}/*.parquet"
     tables:
-      - name: example
+      - name: cms_part_d_spending_by_drug
         description: |
-          Placeholder source. Replace with real bronze drops (NPPES
-          providers, Part D drug spending, etc.) once the Dagster
-          ingestion assets land.
+          Medicare Part D Spending by Drug (CMS Socrata dataset
+          `mhdd-npjx`). Landed by the `cms_part_d_spending_by_drug`
+          Dagster asset; one Parquet file per asset run.
+      - name: cms_healthcare_gov_glossary
+        description: |
+          Healthcare.gov glossary terms. Landed by the
+          `cms_healthcare_gov_glossary` Dagster asset.
+      - name: cms_healthcare_gov_articles
+        description: |
+          Healthcare.gov articles. Landed by the
+          `cms_healthcare_gov_articles` Dagster asset.
+      - name: cms_nppes_providers
+        description: |
+          NPPES organizational providers (NPI-2), swept state-by-state
+          from the NPI Registry by the `cms_nppes_providers` Dagster
+          asset. Not exhaustive: NPPES caps any single query at 1,200
+          reachable rows.
