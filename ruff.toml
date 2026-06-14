@@ -89,3 +89,9 @@ testing = ["pytest*", "tests*"]
 "**/conftest.py" = ["INP001"]
 # Script file relaxed standards
 "**/scripts/**/*.py" = ["T201", "EXE001"]
+
+[lint.flake8-tidy-imports.banned-api]
+# `typing.Any` is banned — see docs/policies/no-any.md. ANN401 catches `Any`
+# in function annotations; this catches the import itself, plus variable
+# annotations and `cast(Any, …)` that ANN401 misses.
+"typing.Any".msg = "Use a precise type (TypedDict / Pydantic / dataclass) or the JsonValue / JsonObject aliases from cms_api. See docs/policies/no-any.md."

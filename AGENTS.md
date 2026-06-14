@@ -67,6 +67,10 @@
   cannot end a turn while linters are unhappy.
 - A PostToolUse hook runs `ruff format` + `ruff check --fix` on any
   `.py` file just edited.
+- **`typing.Any` is banned in this repo** — see
+  `docs/policies/no-any.md`. Ruff rejects both `Any` in annotations
+  (`ANN401`) and the import itself (`flake8-tidy-imports` banned-api),
+  so the Stop hook will fail any turn that reintroduces it.
 
 ## Local/CI parity
 
