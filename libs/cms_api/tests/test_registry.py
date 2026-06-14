@@ -88,6 +88,34 @@ def test_healthcare_gov_spec_rejects_dataset_id() -> None:
         )
 
 
+def test_dkan_provider_data_spec_requires_dataset_id() -> None:
+    """A dkan_provider_data row missing dataset_id fails validation."""
+    with pytest.raises(ValueError, match="dataset_id"):
+        DatasetSpec.model_validate(
+            {
+                "key": "bad_dkan",
+                "source": "dkan_provider_data",
+                "description": "x",
+                "group": "cms_raw_provider_compare",
+            },
+        )
+
+
+def test_dkan_provider_data_spec_rejects_path() -> None:
+    """A dkan_provider_data row with `path` set fails validation."""
+    with pytest.raises(ValueError, match="must not set"):
+        DatasetSpec.model_validate(
+            {
+                "key": "weird_dkan",
+                "source": "dkan_provider_data",
+                "dataset_id": "xubh-q36u",
+                "path": "/api/x.json",
+                "description": "x",
+                "group": "cms_raw_provider_compare",
+            },
+        )
+
+
 def test_unknown_source_rejected() -> None:
     """Sources outside the configured Literal are rejected."""
     with pytest.raises(ValueError, match="source"):

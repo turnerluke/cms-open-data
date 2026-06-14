@@ -28,3 +28,53 @@ sources:
           from the NPI Registry by the `cms_nppes_providers` Dagster
           asset. Not exhaustive: NPPES caps any single query at 1,200
           reachable rows.
+      - name: cms_hospital_general_information
+        description: |
+          Hospital General Information from Care Compare (DKAN dataset
+          `xubh-q36u`). Landed by the `cms_hospital_general_information`
+          Dagster asset.
+      - name: cms_hospital_hcahps
+        description: |
+          Patient Survey HCAHPS — Hospital level (DKAN dataset
+          `dgck-syfz`). Landed by the `cms_hospital_hcahps` Dagster
+          asset.
+      - name: cms_hospital_associated_infections
+        description: |
+          Healthcare-Associated Infections — Hospital level (DKAN
+          dataset `77hc-ibv8`). Landed by the
+          `cms_hospital_associated_infections` Dagster asset.
+      - name: cms_hospital_complications_deaths
+        description: |
+          Complications and Deaths — Hospital level (DKAN dataset
+          `ynj2-r877`). Landed by the
+          `cms_hospital_complications_deaths` Dagster asset.
+      - name: cms_hospital_unplanned_visits
+        description: |
+          Unplanned Hospital Visits — Hospital level (DKAN dataset
+          `632h-zaca`). Landed by the `cms_hospital_unplanned_visits`
+          Dagster asset.
+      - name: cms_hospital_value_based_purchasing_total
+        description: |
+          Hospital Value-Based Purchasing — Total Performance Score
+          (DKAN dataset `ypbt-wvdk`). Landed by the
+          `cms_hospital_value_based_purchasing_total` Dagster asset.
+      - name: cms_hospital_readmissions_reduction
+        description: |
+          Hospital Readmissions Reduction Program (DKAN dataset
+          `9n3s-kdb3`). Landed by the
+          `cms_hospital_readmissions_reduction` Dagster asset.
+      - name: cms_home_health_care_agencies
+        description: |
+          Home Health Care Agencies from Care Compare (DKAN dataset
+          `6jpm-sxkc`). Landed by the `cms_home_health_care_agencies`
+          Dagster asset.
+      - name: cms_hospice_general_information
+        description: |
+          Hospice General Information from Care Compare (DKAN dataset
+          `yc9t-dgbk`). Landed by the `cms_hospice_general_information`
+          Dagster asset.
+      - name: cms_dialysis_facility_listing
+        description: |
+          Dialysis Facility Listing by Facility (DKAN dataset
+          `23ew-n7w9`). Landed by the `cms_dialysis_facility_listing`
+          Dagster asset.

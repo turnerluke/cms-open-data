@@ -117,6 +117,37 @@ def test_healthcare_gov_registry_asset_materializes(
     assert "title" in table.column_names
 
 
+def test_dkan_provider_data_registry_asset_materializes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A dkan_provider_data-sourced registry asset lands rows from `iter_provider_data_catalog`."""
+    sample: list[JsonObject] = [
+        {"facility_id": "010001", "facility_name": "Hospital A"},
+        {"facility_id": "010002", "facility_name": "Hospital B"},
+    ]
+    captured_ids: list[str] = []
+
+    def fake_iter(dataset_id: str) -> Iterator[JsonObject]:
+        captured_ids.append(dataset_id)
+        return iter(sample)
+
+    monkeypatch.setattr(registry_assets, "iter_provider_data_catalog", fake_iter)
+
+    dkan_specs = [s for s in load_registry() if s.source == "dkan_provider_data"]
+    assert dkan_specs, "expected at least one dkan_provider_data-sourced registry row"
+    spec = dkan_specs[0]
+    asset_def = _registry_asset(spec)
+
+    result = _materialize(asset_def, tmp_path)
+
+    assert result.success
+    assert captured_ids == [spec.dataset_id]
+    table = pq.read_table(_only_parquet(tmp_path, f"cms_{spec.key}"))
+    assert table.num_rows == 2
+    assert "facility_name" in table.column_names
+
+
 def test_registry_asset_fails_on_empty_socrata_extract(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

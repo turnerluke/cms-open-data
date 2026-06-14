@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 # `libs/cms_api/src/cms_api/registry.py` -> `libs/cms_api/datasets.toml`.
 _DATASETS_TOML = Path(__file__).resolve().parents[2] / "datasets.toml"
 
-SourceLiteral = Literal["socrata", "healthcare_gov"]
+SourceLiteral = Literal["socrata", "healthcare_gov", "dkan_provider_data"]
 
 
 class DatasetSpec(BaseModel):
@@ -60,6 +60,13 @@ class DatasetSpec(BaseModel):
                 raise ValueError(msg)
             if self.dataset_id is not None:
                 msg = f"healthcare_gov dataset {self.key!r} must not set `dataset_id`"
+                raise ValueError(msg)
+        elif self.source == "dkan_provider_data":
+            if not self.dataset_id:
+                msg = f"dkan_provider_data dataset {self.key!r} requires `dataset_id`"
+                raise ValueError(msg)
+            if self.path is not None:
+                msg = f"dkan_provider_data dataset {self.key!r} must not set `path`"
                 raise ValueError(msg)
         return self
 
