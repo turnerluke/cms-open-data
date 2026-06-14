@@ -7,7 +7,7 @@ providers (`enumeration_type='NPI-2'`). Each state stays well under the cap
 for most jurisdictions; this is not exhaustive coverage.
 """
 
-from cms_api import search_providers
+from cms_api import NppesProvider, search_providers
 import pyarrow as pa
 
 from dagster import AssetExecutionContext, Config, asset
@@ -48,12 +48,12 @@ def cms_nppes_providers(
     config: NppesProvidersConfig,
 ) -> pa.Table:
     """Sweep NPPES organizational providers and land them as Parquet."""
-    rows: list[dict[str, object]] = []
+    providers: list[NppesProvider] = []
     for state in config.states:
-        state_rows = [provider.model_dump(mode="json") for provider in search_providers(enumeration_type="NPI-2", state=state)]
-        context.log.info("Fetched %d NPPES NPI-2 providers from %s", len(state_rows), state)
-        rows.extend(state_rows)
-    if not rows:
+        state_providers = list(search_providers(enumeration_type="NPI-2", state=state))
+        context.log.info("Fetched %d NPPES NPI-2 providers from %s", len(state_providers), state)
+        providers.extend(state_providers)
+    if not providers:
         msg = "NPPES sweep returned zero providers; refusing to land empty Parquet"
         raise RuntimeError(msg)
-    return pa.Table.from_pylist(rows)
+    return pa.Table.from_pylist([p.model_dump(mode="json") for p in providers])

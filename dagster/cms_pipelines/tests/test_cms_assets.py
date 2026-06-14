@@ -7,7 +7,6 @@ pyarrow + IO-manager wiring without touching the public CMS APIs.
 
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
 from cms_api import Article, GlossaryTerm, NppesProvider, PartDSpendingByDrug
 from cms_pipelines.defs.cms import healthcare_gov, nppes, socrata
@@ -19,19 +18,22 @@ from dagster import AssetsDefinition, ExecuteInProcessResult, materialize
 import pytest
 
 
-def _materialize(
-    asset: AssetsDefinition,
-    tmp_path: Path,
-    *,
-    run_config: dict[str, Any] | None = None,
-    raise_on_error: bool = True,
-) -> ExecuteInProcessResult:
+def _io_manager(tmp_path: Path) -> ParquetIOManager:
+    """Build a `ParquetIOManager` rooted at `tmp_path` for a single test run."""
+    return ParquetIOManager(root=str(tmp_path))
+
+
+def _materialize(asset: AssetsDefinition, tmp_path: Path) -> ExecuteInProcessResult:
     """Materialize `asset` against a fresh `ParquetIOManager` rooted at `tmp_path`."""
+    return materialize([asset], resources={"parquet_io_manager": _io_manager(tmp_path)})
+
+
+def _materialize_nppes(tmp_path: Path, *, states: list[str]) -> ExecuteInProcessResult:
+    """Materialize the NPPES asset with the given state list as its `Config.states`."""
     return materialize(
-        [asset],
-        resources={"parquet_io_manager": ParquetIOManager(root=str(tmp_path))},
-        run_config=run_config or {},
-        raise_on_error=raise_on_error,
+        [nppes.cms_nppes_providers],
+        resources={"parquet_io_manager": _io_manager(tmp_path)},
+        run_config={"ops": {"cms_nppes_providers": {"config": {"states": states}}}},
     )
 
 
@@ -159,8 +161,7 @@ def test_nppes_state_sweep_collects_per_state(
 
     monkeypatch.setattr(nppes, "search_providers", fake_search)
 
-    run_config = {"ops": {"cms_nppes_providers": {"config": {"states": ["CA", "TX"]}}}}
-    result = _materialize(nppes.cms_nppes_providers, tmp_path, run_config=run_config)
+    result = _materialize_nppes(tmp_path, states=["CA", "TX"])
 
     assert result.success
     table = pq.read_table(_only_parquet(tmp_path, "cms_nppes_providers"))
@@ -179,6 +180,5 @@ def test_nppes_sweep_fails_when_every_state_empty(
 
     monkeypatch.setattr(nppes, "search_providers", empty_search)
 
-    run_config = {"ops": {"cms_nppes_providers": {"config": {"states": ["CA"]}}}}
     with pytest.raises(Exception, match="zero providers"):
-        _materialize(nppes.cms_nppes_providers, tmp_path, run_config=run_config)
+        _materialize_nppes(tmp_path, states=["CA"])
