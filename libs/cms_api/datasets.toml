@@ -175,3 +175,67 @@ source = "dkan_provider_data"
 dataset_id = "azum-44iv"
 description = "Long-Term Care Hospital — General Information."
 group = "cms_raw_provider_compare"
+
+# --- Provider Summary by Type of Service -------------------------------------
+# CMS data-api/v1 datasets distributed as annual CSVs via the DCAT catalog at
+# /data.json. Per-row size is large (10M+ for Physician by Provider and
+# Service); the bulk-CSV generator hands the URL to DuckDB rather than
+# paginating JSON. `dataset_id` is the bare UUID portion of the catalog's
+# /data-api/v1/dataset/<uuid>/... identifier. Without an explicit `year`
+# the latest CSV distribution is materialized.
+
+[[dataset]]
+key = "medicare_physician_by_provider"
+source = "dkan_data_api_bulk"
+dataset_id = "8889d81e-2ee7-448f-8713-f071038289b5"
+description = "Medicare Physician & Other Practitioners — by Provider."
+group = "cms_raw_provider_summary"
+
+[[dataset]]
+key = "medicare_physician_by_provider_and_service"
+source = "dkan_data_api_bulk"
+dataset_id = "92396110-2aed-4d63-a6a2-5d6207d46a29"
+description = "Medicare Physician & Other Practitioners — by Provider and Service."
+group = "cms_raw_provider_summary"
+
+[[dataset]]
+key = "medicare_physician_by_geography_and_service"
+source = "dkan_data_api_bulk"
+dataset_id = "6fea9d79-0129-4e4c-b1b8-23cd86a4f435"
+description = "Medicare Physician & Other Practitioners — by Geography and Service."
+group = "cms_raw_provider_summary"
+
+[[dataset]]
+key = "medicare_part_d_prescribers_by_provider"
+source = "dkan_data_api_bulk"
+dataset_id = "14d8e8a9-7e9b-4370-a044-bf97c46b4b44"
+description = "Medicare Part D Prescribers — by Provider."
+group = "cms_raw_provider_summary"
+
+[[dataset]]
+key = "medicare_part_d_prescribers_by_provider_and_drug"
+source = "dkan_data_api_bulk"
+dataset_id = "9552739e-3d05-4c1b-8eff-ecabf391e2e5"
+description = "Medicare Part D Prescribers — by Provider and Drug."
+group = "cms_raw_provider_summary"
+
+[[dataset]]
+key = "medicare_part_d_prescribers_by_geography_and_drug"
+source = "dkan_data_api_bulk"
+dataset_id = "c8ea3f8e-3a09-4fea-86f2-8902fb4b0920"
+description = "Medicare Part D Prescribers — by Geography and Drug."
+group = "cms_raw_provider_summary"
+
+[[dataset]]
+key = "medicare_inpatient_hospitals_by_provider"
+source = "dkan_data_api_bulk"
+dataset_id = "ee6fb1a5-39b9-46b3-a980-a7284551a732"
+description = "Medicare Inpatient Hospitals — by Provider."
+group = "cms_raw_provider_summary"
+
+[[dataset]]
+key = "medicare_outpatient_hospitals_by_provider_and_service"
+source = "dkan_data_api_bulk"
+dataset_id = "ccbc9a44-40d4-46b4-a709-5caa59212e50"
+description = "Medicare Outpatient Hospitals — by Provider and Service (CMS does not publish a provider-only outpatient summary; this is the closest analog to the inpatient by-provider dataset)."
+group = "cms_raw_provider_summary"

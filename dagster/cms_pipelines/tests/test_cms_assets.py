@@ -54,8 +54,14 @@ def _registry_asset(spec: DatasetSpec) -> AssetsDefinition:
 
 
 def test_one_asset_emitted_per_registry_row() -> None:
-    """Every registry row should resolve to an AssetsDefinition with the expected key."""
+    """Every JSON-paginated registry row resolves to an `AssetsDefinition`.
+
+    `dkan_data_api_bulk` rows live on the sibling `bulk_csv_assets`
+    module (different fetcher contract) so they're checked there instead.
+    """
     for spec in load_registry():
+        if spec.source == "dkan_data_api_bulk":
+            continue
         asset_def = _registry_asset(spec)
         assert isinstance(asset_def, AssetsDefinition)
         assert asset_def.key.path[-1] == f"cms_{spec.key}"

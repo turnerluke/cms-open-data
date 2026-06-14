@@ -116,6 +116,64 @@ def test_dkan_provider_data_spec_rejects_path() -> None:
         )
 
 
+def test_dkan_data_api_bulk_spec_requires_dataset_id() -> None:
+    """A dkan_data_api_bulk row missing dataset_id fails validation."""
+    with pytest.raises(ValueError, match="dataset_id"):
+        DatasetSpec.model_validate(
+            {
+                "key": "bad_bulk",
+                "source": "dkan_data_api_bulk",
+                "description": "x",
+                "group": "cms_raw_provider_summary",
+            },
+        )
+
+
+def test_dkan_data_api_bulk_spec_rejects_path() -> None:
+    """A dkan_data_api_bulk row with `path` set fails validation."""
+    with pytest.raises(ValueError, match="must not set"):
+        DatasetSpec.model_validate(
+            {
+                "key": "weird_bulk",
+                "source": "dkan_data_api_bulk",
+                "dataset_id": "8889d81e-2ee7-448f-8713-f071038289b5",
+                "path": "/api/x.json",
+                "description": "x",
+                "group": "cms_raw_provider_summary",
+            },
+        )
+
+
+def test_dkan_data_api_bulk_spec_accepts_year() -> None:
+    """A dkan_data_api_bulk row may carry an optional `year` selector."""
+    spec = DatasetSpec.model_validate(
+        {
+            "key": "physician_2023",
+            "source": "dkan_data_api_bulk",
+            "dataset_id": "8889d81e-2ee7-448f-8713-f071038289b5",
+            "year": 2023,
+            "description": "Medicare Physician (2023).",
+            "group": "cms_raw_provider_summary",
+        },
+    )
+    assert spec.year == 2023
+
+
+def test_socrata_spec_rejects_year() -> None:
+    """`year` is only valid for `dkan_data_api_bulk`; setting it on Socrata is a mistake."""
+    with pytest.raises(ValueError, match="must not set"):
+        DatasetSpec.model_validate(
+            {
+                "key": "weird_socrata_with_year",
+                "source": "socrata",
+                "dataset_id": "abcd-1234",
+                "year": 2023,
+                "description": "x",
+                "group": "cms_raw",
+            },
+        )
+
+
 def test_unknown_source_rejected() -> None:
     """Sources outside the configured Literal are rejected."""
     with pytest.raises(ValueError, match="source"):

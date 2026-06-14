@@ -22,7 +22,19 @@ if TYPE_CHECKING:
 # `libs/cms_api/src/cms_api/registry.py` -> `libs/cms_api/datasets.toml`.
 _DATASETS_TOML = Path(__file__).resolve().parents[2] / "datasets.toml"
 
-SourceLiteral = Literal["socrata", "healthcare_gov", "dkan_provider_data"]
+SourceLiteral = Literal["socrata", "healthcare_gov", "dkan_provider_data", "dkan_data_api_bulk"]
+
+
+# Per-source required and forbidden fields. Required fields must be
+# truthy on the spec; forbidden fields must be left at their default
+# `None`. ``year`` is forbidden everywhere except ``dkan_data_api_bulk``,
+# where it's an optional year selector.
+_SOURCE_FIELD_RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "socrata": (("dataset_id",), ("path", "year")),
+    "healthcare_gov": (("path",), ("dataset_id", "year")),
+    "dkan_provider_data": (("dataset_id",), ("path", "year")),
+    "dkan_data_api_bulk": (("dataset_id",), ("path",)),
+}
 
 
 class DatasetSpec(BaseModel):
@@ -43,30 +55,24 @@ class DatasetSpec(BaseModel):
     dataset_id: str | None = None
     domain: str = "data.cms.gov"
     path: str | None = None
+    year: int | None = None
 
     @model_validator(mode="after")
     def _validate_source_fields(self) -> DatasetSpec:
-        """Reject specs missing the field their `source` requires."""
-        if self.source == "socrata":
-            if not self.dataset_id:
-                msg = f"socrata dataset {self.key!r} requires `dataset_id`"
+        """Reject specs missing the field their `source` requires.
+
+        Rules live in ``_SOURCE_FIELD_RULES`` so each source contributes
+        one row and the validator stays a single loop — adding a fourth
+        source doesn't fan out into another if/elif arm.
+        """
+        required, forbidden = _SOURCE_FIELD_RULES[self.source]
+        for field in required:
+            if not getattr(self, field):
+                msg = f"{self.source} dataset {self.key!r} requires `{field}`"
                 raise ValueError(msg)
-            if self.path is not None:
-                msg = f"socrata dataset {self.key!r} must not set `path`"
-                raise ValueError(msg)
-        elif self.source == "healthcare_gov":
-            if not self.path:
-                msg = f"healthcare_gov dataset {self.key!r} requires `path`"
-                raise ValueError(msg)
-            if self.dataset_id is not None:
-                msg = f"healthcare_gov dataset {self.key!r} must not set `dataset_id`"
-                raise ValueError(msg)
-        elif self.source == "dkan_provider_data":
-            if not self.dataset_id:
-                msg = f"dkan_provider_data dataset {self.key!r} requires `dataset_id`"
-                raise ValueError(msg)
-            if self.path is not None:
-                msg = f"dkan_provider_data dataset {self.key!r} must not set `path`"
+        for field in forbidden:
+            if getattr(self, field) is not None:
+                msg = f"{self.source} dataset {self.key!r} must not set `{field}`"
                 raise ValueError(msg)
         return self
 
