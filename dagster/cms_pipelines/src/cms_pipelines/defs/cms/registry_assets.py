@@ -2,9 +2,10 @@
 
 One Dagster `@asset` per row in `libs/cms_api/datasets.toml`. The factory
 routes each spec to the right `cms_api` client based on `spec.source`
-(Socrata's `iter_dataset` or healthcare.gov's `get_static_json`), lands
-the rows as Parquet via `parquet_io_manager`, and raises if the extract
-is empty — same guardrails the previous hand-written assets had.
+(Socrata's `iter_dataset`, healthcare.gov's `get_static_json`, or DKAN's
+`iter_provider_data_catalog`), lands the rows as Parquet via
+`parquet_io_manager`, and raises if the extract is empty — same
+guardrails the previous hand-written assets had.
 
 To add a dataset, append a `[[dataset]]` row to `datasets.toml` and the
 asset shows up here automatically; no new module needed.
@@ -12,7 +13,7 @@ asset shows up here automatically; no new module needed.
 
 from collections.abc import Callable
 
-from cms_api import DatasetSpec, JsonObject, iter_dataset, load_registry
+from cms_api import DatasetSpec, JsonObject, iter_dataset, iter_provider_data_catalog, load_registry
 from cms_api.healthcare_gov import get_static_json
 import pyarrow as pa
 
@@ -40,9 +41,18 @@ def _healthcare_gov_rows(spec: DatasetSpec) -> list[JsonObject]:
     return get_static_json(spec.path)
 
 
+def _dkan_provider_data_rows(spec: DatasetSpec) -> list[JsonObject]:
+    """Pull every row of a Provider Data Catalog dataset for `spec`."""
+    if spec.dataset_id is None:
+        msg = f"dkan_provider_data dataset {spec.key!r} is missing `dataset_id`"
+        raise RuntimeError(msg)
+    return list(iter_provider_data_catalog(spec.dataset_id))
+
+
 _FETCHERS: dict[str, Callable[[DatasetSpec], list[JsonObject]]] = {
     "socrata": _socrata_rows,
     "healthcare_gov": _healthcare_gov_rows,
+    "dkan_provider_data": _dkan_provider_data_rows,
 }
 
 

@@ -8,6 +8,7 @@
 # Source-specific required fields:
 #   - socrata: dataset_id (Socrata 4x4)
 #   - healthcare_gov: path (e.g. "/api/glossary.json")
+#   - dkan_provider_data: dataset_id (Provider Data Catalog UUID/4x4)
 # Cross-field validation lives in `cms_api.registry.DatasetSpec`.
 
 [[dataset]]
@@ -30,3 +31,77 @@ source = "healthcare_gov"
 path = "/api/articles.json"
 description = "Healthcare.gov consumer articles."
 group = "cms_raw"
+
+# --- Provider Data Catalog (Care Compare) -----------------------------------
+# DKAN-backed datasets at data.cms.gov/provider-data. Each row is queried via
+# the metastore-resolved distribution id; see `cms_api.dkan`.
+
+[[dataset]]
+key = "hospital_general_information"
+source = "dkan_provider_data"
+dataset_id = "xubh-q36u"
+description = "Hospital General Information from Care Compare."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "hospital_hcahps"
+source = "dkan_provider_data"
+dataset_id = "dgck-syfz"
+description = "Patient Survey HCAHPS — Hospital level."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "hospital_associated_infections"
+source = "dkan_provider_data"
+dataset_id = "77hc-ibv8"
+description = "Healthcare-Associated Infections — Hospital level."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "hospital_complications_deaths"
+source = "dkan_provider_data"
+dataset_id = "ynj2-r877"
+description = "Complications and Deaths — Hospital level."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "hospital_unplanned_visits"
+source = "dkan_provider_data"
+dataset_id = "632h-zaca"
+description = "Unplanned Hospital Visits — Hospital level."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "hospital_value_based_purchasing_total"
+source = "dkan_provider_data"
+dataset_id = "ypbt-wvdk"
+description = "Hospital Value-Based Purchasing — Total Performance Score."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "hospital_readmissions_reduction"
+source = "dkan_provider_data"
+dataset_id = "9n3s-kdb3"
+description = "Hospital Readmissions Reduction Program."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "home_health_care_agencies"
+source = "dkan_provider_data"
+dataset_id = "6jpm-sxkc"
+description = "Home Health Care Agencies (Care Compare)."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "hospice_general_information"
+source = "dkan_provider_data"
+dataset_id = "yc9t-dgbk"
+description = "Hospice General Information (Care Compare)."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "dialysis_facility_listing"
+source = "dkan_provider_data"
+dataset_id = "23ew-n7w9"
+description = "Dialysis Facility Listing by Facility."
+group = "cms_raw_provider_compare"
