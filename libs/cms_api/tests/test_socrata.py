@@ -1,20 +1,21 @@
 """Tests for the Socrata client."""
 
-from cms_api.socrata import DATASET_PART_D_SPENDING_BY_DRUG, MEDICAID_DOMAIN, iter_dataset, iter_part_d_spending_by_drug
+from cms_api.socrata import MEDICAID_DOMAIN, iter_dataset
 import httpx
 import respx
 
 import pytest
 
 
-PART_D_PATH = f"/resource/{DATASET_PART_D_SPENDING_BY_DRUG}.json"
+PART_D_DATASET_ID = "mhdd-npjx"
+PART_D_PATH = f"/resource/{PART_D_DATASET_ID}.json"
 CMS_BASE = "https://data.cms.gov"
 MEDICAID_BASE = f"https://{MEDICAID_DOMAIN}"
 
 
 @respx.mock
-def test_iter_part_d_spending_by_drug_happy_path() -> None:
-    """A single page response yields one typed row per dict."""
+def test_iter_dataset_happy_path_yields_each_row() -> None:
+    """A single-page response yields one dict per row."""
     respx.get(f"{CMS_BASE}{PART_D_PATH}").respond(
         json=[
             {"brnd_name": "Drug A", "gnrc_name": "GenA", "mftr_name": "MfgA", "tot_spndng_2022": "1000"},
@@ -22,13 +23,11 @@ def test_iter_part_d_spending_by_drug_happy_path() -> None:
         ],
     )
 
-    rows = list(iter_part_d_spending_by_drug())
+    rows = list(iter_dataset(PART_D_DATASET_ID))
 
     assert len(rows) == 2
-    assert rows[0].brnd_name == "Drug A"
-    assert rows[0].gnrc_name == "GenA"
-    # Year-suffixed columns flow through as Pydantic extras.
-    assert rows[0].model_dump()["tot_spndng_2022"] == "1000"
+    assert rows[0]["brnd_name"] == "Drug A"
+    assert rows[0]["tot_spndng_2022"] == "1000"
 
 
 @respx.mock
@@ -44,7 +43,7 @@ def test_iter_dataset_paginates_until_short_page() -> None:
         ],
     )
 
-    rows = list(iter_dataset(DATASET_PART_D_SPENDING_BY_DRUG, batch_size=2))
+    rows = list(iter_dataset(PART_D_DATASET_ID, batch_size=2))
 
     assert [r["id"] for r in rows] == ["0", "1", "2"]
     assert route.call_count == 2
@@ -62,7 +61,7 @@ def test_iter_dataset_stops_on_empty_page() -> None:
         ],
     )
 
-    rows = list(iter_dataset(DATASET_PART_D_SPENDING_BY_DRUG, batch_size=2))
+    rows = list(iter_dataset(PART_D_DATASET_ID, batch_size=2))
 
     assert len(rows) == 2
     assert route.call_count == 2
@@ -75,7 +74,7 @@ def test_iter_dataset_passes_soql_clauses_and_app_token() -> None:
 
     list(
         iter_dataset(
-            DATASET_PART_D_SPENDING_BY_DRUG,
+            PART_D_DATASET_ID,
             select="brnd_name, mftr_name",
             where="mftr_name = 'Pfizer'",
             order="brnd_name",
@@ -96,7 +95,7 @@ def test_iter_dataset_uses_medicaid_domain() -> None:
     """`domain=MEDICAID_DOMAIN` routes the request to data.medicaid.gov."""
     route = respx.get(f"{MEDICAID_BASE}{PART_D_PATH}").respond(json=[{"id": "x"}])
 
-    rows = list(iter_dataset(DATASET_PART_D_SPENDING_BY_DRUG, domain=MEDICAID_DOMAIN, batch_size=10))
+    rows = list(iter_dataset(PART_D_DATASET_ID, domain=MEDICAID_DOMAIN, batch_size=10))
 
     assert rows == [{"id": "x"}]
     assert route.call_count == 1
@@ -112,7 +111,7 @@ def test_iter_dataset_retries_on_5xx_then_succeeds() -> None:
         ],
     )
 
-    rows = list(iter_dataset(DATASET_PART_D_SPENDING_BY_DRUG, batch_size=10))
+    rows = list(iter_dataset(PART_D_DATASET_ID, batch_size=10))
 
     assert rows == [{"id": "0"}]
     assert route.call_count == 2
@@ -128,7 +127,7 @@ def test_iter_dataset_retries_on_429() -> None:
         ],
     )
 
-    rows = list(iter_dataset(DATASET_PART_D_SPENDING_BY_DRUG, batch_size=10))
+    rows = list(iter_dataset(PART_D_DATASET_ID, batch_size=10))
 
     assert rows == [{"id": "0"}]
     assert route.call_count == 2
@@ -140,7 +139,7 @@ def test_iter_dataset_does_not_retry_on_4xx() -> None:
     route = respx.get(f"{CMS_BASE}{PART_D_PATH}").respond(400, json={"error": "bad query"})
 
     with pytest.raises(httpx.HTTPStatusError):
-        list(iter_dataset(DATASET_PART_D_SPENDING_BY_DRUG, batch_size=10))
+        list(iter_dataset(PART_D_DATASET_ID, batch_size=10))
 
     assert route.call_count == 1
 
@@ -151,7 +150,7 @@ def test_iter_dataset_rejects_non_array_payload() -> None:
     respx.get(f"{CMS_BASE}{PART_D_PATH}").respond(json={"unexpected": "object"})
 
     with pytest.raises(TypeError, match="expected JSON array"):
-        list(iter_dataset(DATASET_PART_D_SPENDING_BY_DRUG, batch_size=10))
+        list(iter_dataset(PART_D_DATASET_ID, batch_size=10))
 
 
 @respx.mock
@@ -160,7 +159,7 @@ def test_iter_dataset_rejects_non_object_row() -> None:
     respx.get(f"{CMS_BASE}{PART_D_PATH}").respond(json=["not-a-dict"])
 
     with pytest.raises(TypeError, match="expected Socrata row to be a JSON object"):
-        list(iter_dataset(DATASET_PART_D_SPENDING_BY_DRUG, batch_size=10))
+        list(iter_dataset(PART_D_DATASET_ID, batch_size=10))
 
 
 @respx.mock
@@ -169,6 +168,6 @@ def test_iter_dataset_reads_app_token_from_env(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("CMS_API_SOCRATA_APP_TOKEN", "env-token")
     route = respx.get(f"{CMS_BASE}{PART_D_PATH}").respond(json=[])
 
-    list(iter_dataset(DATASET_PART_D_SPENDING_BY_DRUG))
+    list(iter_dataset(PART_D_DATASET_ID))
 
     assert route.calls.last.request.headers["X-App-Token"] == "env-token"

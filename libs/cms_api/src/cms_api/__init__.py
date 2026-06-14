@@ -1,23 +1,17 @@
 """Sync client library for CMS, Medicaid, Healthcare.gov, and NPPES public APIs."""
 
 from ._types import JsonObject, JsonValue
-from .healthcare_gov import Article, GlossaryTerm, get_articles, get_glossary
+from .healthcare_gov import Article, GlossaryTerm, get_articles, get_glossary, get_static_json
 from .nppes import NppesAddress, NppesBasic, NppesProvider, NppesTaxonomy, get_provider_by_npi, search_providers
-from .socrata import (
-    CMS_DOMAIN,
-    DATASET_PART_D_SPENDING_BY_DRUG,
-    MEDICAID_DOMAIN,
-    PartDSpendingByDrug,
-    iter_dataset,
-    iter_part_d_spending_by_drug,
-)
+from .registry import DatasetSpec, load_registry
+from .socrata import CMS_DOMAIN, MEDICAID_DOMAIN, iter_dataset
 
 
 __all__ = [
     "CMS_DOMAIN",
-    "DATASET_PART_D_SPENDING_BY_DRUG",
     "MEDICAID_DOMAIN",
     "Article",
+    "DatasetSpec",
     "GlossaryTerm",
     "JsonObject",
     "JsonValue",
@@ -25,11 +19,11 @@ __all__ = [
     "NppesBasic",
     "NppesProvider",
     "NppesTaxonomy",
-    "PartDSpendingByDrug",
     "get_articles",
     "get_glossary",
     "get_provider_by_npi",
+    "get_static_json",
     "iter_dataset",
-    "iter_part_d_spending_by_drug",
+    "load_registry",
     "search_providers",
 ]
