@@ -53,15 +53,15 @@ def _registry_asset(spec: DatasetSpec) -> AssetsDefinition:
     return getattr(registry_assets, f"cms_{spec.key}")
 
 
-_BULK_CSV_SOURCES = {"dkan_data_api_bulk", "dkan_medicaid_bulk"}
+_BULK_CSV_SOURCES = {"dkan_data_api_bulk", "dkan_medicaid_bulk", "dkan_open_payments_bulk"}
 
 
 def test_one_asset_emitted_per_registry_row() -> None:
     """Every JSON-paginated registry row resolves to an `AssetsDefinition`.
 
-    Bulk-CSV rows (`dkan_data_api_bulk`, `dkan_medicaid_bulk`) live on the
-    sibling `bulk_csv_assets` module (different fetcher contract) so
-    they're checked there instead.
+    Bulk-CSV rows (`dkan_data_api_bulk`, `dkan_medicaid_bulk`,
+    `dkan_open_payments_bulk`) live on the sibling `bulk_csv_assets`
+    module (different fetcher contract) so they're checked there instead.
     """
     for spec in load_registry():
         if spec.source in _BULK_CSV_SOURCES:

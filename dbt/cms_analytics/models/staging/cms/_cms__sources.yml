@@ -203,3 +203,26 @@ sources:
           CMS partitions SDUD as one dataset UUID per calendar year;
           this row tracks 2023 — additional years can be added as
           separate registry rows.
+      - name: cms_open_payments_general_2024
+        description: |
+          Open Payments — General Payments, program year 2024
+          (`openpaymentsdata.cms.gov` DKAN dataset
+          `e6b17c6a-2534-4207-a4a1-6746a14911ff`). Industry-to-physician
+          transfers under the Sunshine Act; ~12M rows. Landed via DuckDB
+          bulk-CSV by the `cms_open_payments_general_2024` Dagster
+          asset. CMS partitions Open Payments at the UUID level — one
+          dataset per program year.
+      - name: cms_open_payments_research_2024
+        description: |
+          Open Payments — Research Payments, program year 2024
+          (`openpaymentsdata.cms.gov` DKAN dataset
+          `2f15cb85-8887-4dcc-a318-1f8ec1d815b3`). Landed via DuckDB
+          bulk-CSV by the `cms_open_payments_research_2024` Dagster
+          asset.
+      - name: cms_open_payments_ownership_2024
+        description: |
+          Open Payments — Physician Ownership and Investment Interests,
+          program year 2024 (`openpaymentsdata.cms.gov` DKAN dataset
+          `9ac4f7f8-b6e4-4d80-8410-4aba7e71dd02`). Landed via DuckDB
+          bulk-CSV by the `cms_open_payments_ownership_2024` Dagster
+          asset.

@@ -31,6 +31,16 @@ endpoint is currently 404. The reliable way to discover their per-year
 CSV download URLs is the DCAT catalog at ``/data.json``; that's what
 ``get_data_api_csv_url`` resolves against. Each yearly distribution
 exposes a ``downloadURL`` we can hand straight to DuckDB.
+
+# Bare-metastore bulk CSV (Medicaid + Open Payments)
+
+``data.medicaid.gov`` and ``openpaymentsdata.cms.gov`` run their own
+DKAN deployments rooted at ``/api/1/`` (no ``/provider-data`` prefix).
+For these we don't need ``/data.json`` discovery: each dataset's
+metastore record already contains a single CSV distribution with a
+direct ``downloadURL``, and CMS partitions by year at the dataset-UUID
+level (one UUID per program year). ``get_dkan_dataset_csv_url`` reads
+that downloadURL straight off the metastore for either host.
 """
 
 from __future__ import annotations
@@ -49,9 +59,10 @@ if TYPE_CHECKING:
 
 PROVIDER_DATA_BASE_URL = "https://data.cms.gov"
 MEDICAID_BASE_URL = "https://data.medicaid.gov"
+OPEN_PAYMENTS_BASE_URL = "https://openpaymentsdata.cms.gov"
 _METASTORE_PATH_TEMPLATE = "/provider-data/api/1/metastore/schemas/dataset/items/{dataset_id}"
 _DATASTORE_PATH_TEMPLATE = "/provider-data/api/1/datastore/query/{distribution_id}"
-_MEDICAID_METASTORE_PATH_TEMPLATE = "/api/1/metastore/schemas/dataset/items/{dataset_id}"
+_BARE_METASTORE_PATH_TEMPLATE = "/api/1/metastore/schemas/dataset/items/{dataset_id}"
 _DATA_JSON_PATH = "/data.json"
 _CSV_MEDIA_TYPE = "text/csv"
 _DATASET_ID_URL_TEMPLATE = "/data-api/v1/dataset/{dataset_id}"
@@ -247,18 +258,24 @@ def get_data_api_csv_url(dataset_id: str, *, year: int | None = None) -> str:
     return by_year[year]
 
 
-def get_medicaid_dataset_csv_url(dataset_id: str) -> str:
-    """Return the CSV ``downloadURL`` for a ``data.medicaid.gov`` DKAN dataset.
+def get_dkan_dataset_csv_url(dataset_id: str, *, base_url: str) -> str:
+    """Return the CSV ``downloadURL`` for a bare-metastore DKAN dataset.
 
-    Medicaid datasets (SDUD per year, NADAC, …) are published on a separate
-    DKAN deployment whose metastore is at ``/api/1/metastore/...`` (no
-    ``/provider-data`` prefix). Each per-year dataset carries a single CSV
-    distribution under a static ``download.medicaid.gov`` URL.
+    Used for DKAN deployments whose metastore is rooted at ``/api/1/``
+    (no ``/provider-data`` prefix) and whose datasets expose a single
+    direct CSV distribution per program year — currently
+    ``data.medicaid.gov`` (SDUD, NADAC) and ``openpaymentsdata.cms.gov``
+    (General/Research/Ownership Payments). Year partitioning is done at
+    the dataset-UUID level by CMS, so there's no year selector here.
 
     Args:
         dataset_id: Dataset UUID (e.g.
             ``"d890d3a9-6b00-43fd-8b31-fcba4c8e2909"`` for State Drug
-            Utilization Data 2023).
+            Utilization Data 2023, or
+            ``"9ac4f7f8-b6e4-4d80-8410-4aba7e71dd02"`` for 2024 Open
+            Payments Ownership).
+        base_url: The DKAN host root, e.g. ``MEDICAID_BASE_URL`` or
+            ``OPEN_PAYMENTS_BASE_URL``.
 
     Raises:
         KeyError: The metastore record has no distribution carrying a
@@ -266,11 +283,11 @@ def get_medicaid_dataset_csv_url(dataset_id: str) -> str:
         TypeError: The metastore payload is shaped unexpectedly.
 
     """
-    path = _MEDICAID_METASTORE_PATH_TEMPLATE.format(dataset_id=dataset_id)
-    with build_client(base_url=MEDICAID_BASE_URL) as client:
+    path = _BARE_METASTORE_PATH_TEMPLATE.format(dataset_id=dataset_id)
+    with build_client(base_url=base_url) as client:
         payload: JsonValue = request_json(client, "GET", path)
     if not isinstance(payload, dict):
-        msg = f"expected medicaid metastore payload to be an object, got {type(payload).__name__}"
+        msg = f"expected DKAN metastore payload to be an object, got {type(payload).__name__}"
         raise TypeError(msg)
     distributions: JsonValue = payload.get("distribution", [])
     if not isinstance(distributions, list):
@@ -282,5 +299,5 @@ def get_medicaid_dataset_csv_url(dataset_id: str) -> str:
         url: JsonValue = entry.get("downloadURL")
         if isinstance(url, str) and url:
             return url
-    msg = f"medicaid dataset {dataset_id!r} has no distribution with a downloadURL"
+    msg = f"DKAN dataset {dataset_id!r} at {base_url!r} has no distribution with a downloadURL"
     raise KeyError(msg)

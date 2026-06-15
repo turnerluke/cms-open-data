@@ -262,3 +262,34 @@ source = "dkan_medicaid_bulk"
 dataset_id = "d890d3a9-6b00-43fd-8b31-fcba4c8e2909"
 description = "Medicaid State Drug Utilization Data 2023 (data.medicaid.gov DKAN; one UUID per year)."
 group = "cms_raw_drug_spending"
+
+# --- Open Payments (Sunshine Act) --------------------------------------------
+# openpaymentsdata.cms.gov is its own DKAN deployment whose metastore is
+# rooted at /api/1/ (same shape as data.medicaid.gov). Each dataset
+# carries a single direct-CSV distribution; CMS partitions by program
+# year at the UUID level, so each PY is a separate registry row. These
+# IDs are the 2024 program-year datasets (latest published; CMS posts
+# the prior calendar year's data in mid-following-year). General
+# Payments alone is ~12M rows — streamed straight to Parquet via the
+# same DuckDB bulk-CSV path used for the provider-summary datasets.
+
+[[dataset]]
+key = "open_payments_general_2024"
+source = "dkan_open_payments_bulk"
+dataset_id = "e6b17c6a-2534-4207-a4a1-6746a14911ff"
+description = "Open Payments — General Payments, program year 2024 (industry-to-physician transfers; ~12M rows)."
+group = "cms_raw_open_payments"
+
+[[dataset]]
+key = "open_payments_research_2024"
+source = "dkan_open_payments_bulk"
+dataset_id = "2f15cb85-8887-4dcc-a318-1f8ec1d815b3"
+description = "Open Payments — Research Payments, program year 2024."
+group = "cms_raw_open_payments"
+
+[[dataset]]
+key = "open_payments_ownership_2024"
+source = "dkan_open_payments_bulk"
+dataset_id = "9ac4f7f8-b6e4-4d80-8410-4aba7e71dd02"
+description = "Open Payments — Physician Ownership and Investment Interests, program year 2024."
+group = "cms_raw_open_payments"

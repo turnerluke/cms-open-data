@@ -9,7 +9,7 @@ shows up under a directory the test owns.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from cms_api import DatasetSpec, load_registry
 from cms_pipelines.defs.cms import bulk_csv_assets
@@ -39,7 +39,7 @@ def _write_fixture(tmp_path: Path, content: str = SAMPLE_CSV) -> Path:
     return csv_path
 
 
-_BULK_CSV_SOURCES = {"dkan_data_api_bulk", "dkan_medicaid_bulk"}
+_BULK_CSV_SOURCES = {"dkan_data_api_bulk", "dkan_medicaid_bulk", "dkan_open_payments_bulk"}
 
 
 def _bulk_spec() -> DatasetSpec:
@@ -49,10 +49,10 @@ def _bulk_spec() -> DatasetSpec:
     return specs[0]
 
 
-def _medicaid_bulk_spec() -> DatasetSpec:
-    """Pick a `dkan_medicaid_bulk` spec out of the registry for these tests."""
-    specs = [s for s in load_registry() if s.source == "dkan_medicaid_bulk"]
-    assert specs, "expected at least one dkan_medicaid_bulk row in datasets.toml"
+def _spec_for_source(source: str) -> DatasetSpec:
+    """Pick the first registry spec whose `source` matches."""
+    specs = [s for s in load_registry() if s.source == source]
+    assert specs, f"expected at least one {source} row in datasets.toml"
     return specs[0]
 
 
@@ -149,36 +149,73 @@ def test_bulk_csv_asset_refuses_empty_csv(
     assert not list((tmp_path / f"cms_{spec.key}").glob("*.parquet"))
 
 
-def test_medicaid_bulk_asset_streams_csv_to_parquet(
+class _BareMetastoreCase(NamedTuple):
+    """One parametrized scenario for the bare-metastore (host-routed) bulk asset test."""
+
+    source: str
+    expected_base_url_attr: str
+    csv_body: str
+    expected_column: str
+
+
+_BARE_METASTORE_CASES = [
+    _BareMetastoreCase(
+        source="dkan_medicaid_bulk",
+        expected_base_url_attr="MEDICAID_BASE_URL",
+        csv_body=(
+            "state,utilization_type,product_name,ndc,units_reimbursed\n"
+            "CA,FFSU,DRUGA,00000000001,100\n"
+            "TX,FFSU,DRUGB,00000000002,250\n"
+        ),
+        expected_column="ndc",
+    ),
+    _BareMetastoreCase(
+        source="dkan_open_payments_bulk",
+        expected_base_url_attr="OPEN_PAYMENTS_BASE_URL",
+        csv_body=(
+            "Change_Type,Physician_Profile_ID,Recipient_State,Total_Amount_of_Payment_USDollars\n"
+            "NEW,12345,CA,1500.00\n"
+            "NEW,67890,TX,2750.00\n"
+        ),
+        expected_column="Physician_Profile_ID",
+    ),
+]
+
+
+@pytest.mark.parametrize("case", _BARE_METASTORE_CASES, ids=["medicaid", "open_payments"])
+def test_bare_metastore_bulk_asset_streams_csv_to_parquet(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    case: _BareMetastoreCase,
 ) -> None:
-    """A `dkan_medicaid_bulk` asset resolves via the medicaid resolver and lands Parquet."""
-    medicaid_csv = (
-        "state,utilization_type,product_name,ndc,units_reimbursed\n"
-        "CA,FFSU,DRUGA,00000000001,100\n"
-        "TX,FFSU,DRUGB,00000000002,250\n"
-    )
-    csv_path = _write_fixture(tmp_path, medicaid_csv)
+    """Both bare-metastore sources route through `get_dkan_dataset_csv_url` with the correct host.
+
+    The single function fans out to either ``MEDICAID_BASE_URL`` or
+    ``OPEN_PAYMENTS_BASE_URL`` based on the resolver wired up in
+    ``bulk_csv_assets._RESOLVERS``; this test verifies both end up
+    requesting the correct host.
+    """
+    csv_path = _write_fixture(tmp_path, case.csv_body)
     monkeypatch.setenv(CMS_RAW_ROOT_ENV, str(tmp_path))
 
-    captured: list[str] = []
+    expected_base_url = getattr(bulk_csv_assets, case.expected_base_url_attr)
+    captured: list[tuple[str, str]] = []
 
-    def fake_medicaid_url(dataset_id: str) -> str:
-        captured.append(dataset_id)
+    def fake_url(dataset_id: str, *, base_url: str) -> str:
+        captured.append((dataset_id, base_url))
         return str(csv_path)
 
-    monkeypatch.setattr(bulk_csv_assets, "get_medicaid_dataset_csv_url", fake_medicaid_url)
+    monkeypatch.setattr(bulk_csv_assets, "get_dkan_dataset_csv_url", fake_url)
 
-    spec = _medicaid_bulk_spec()
+    spec = _spec_for_source(case.source)
     asset_def = _bulk_asset(spec)
 
     result = materialize([asset_def])
 
     assert result.success
-    assert captured == [spec.dataset_id]
+    assert captured == [(spec.dataset_id, expected_base_url)]
     parquets = list((tmp_path / f"cms_{spec.key}").glob("*.parquet"))
     assert len(parquets) == 1
     table = pq.read_table(parquets[0])
     assert table.num_rows == 2
-    assert "ndc" in table.column_names
+    assert case.expected_column in table.column_names

@@ -2,9 +2,10 @@
 
 from cms_api.dkan import (
     MEDICAID_BASE_URL,
+    OPEN_PAYMENTS_BASE_URL,
     PROVIDER_DATA_BASE_URL,
     get_data_api_csv_url,
-    get_medicaid_dataset_csv_url,
+    get_dkan_dataset_csv_url,
     iter_provider_data_catalog,
 )
 import httpx
@@ -24,6 +25,11 @@ BULK_CSV_URL_2024 = "https://data.cms.gov/sites/default/files/2026-05/uuid-2024/
 MEDICAID_SDUD_UUID = "d890d3a9-6b00-43fd-8b31-fcba4c8e2909"
 MEDICAID_METASTORE_PATH = f"/api/1/metastore/schemas/dataset/items/{MEDICAID_SDUD_UUID}"
 MEDICAID_SDUD_CSV_URL = "https://download.medicaid.gov/data/sdud-2023-updated.csv"
+OPEN_PAYMENTS_OWNERSHIP_UUID = "9ac4f7f8-b6e4-4d80-8410-4aba7e71dd02"
+OPEN_PAYMENTS_METASTORE_PATH = f"/api/1/metastore/schemas/dataset/items/{OPEN_PAYMENTS_OWNERSHIP_UUID}"
+OPEN_PAYMENTS_OWNERSHIP_CSV_URL = (
+    "https://download.cms.gov/openpayments/PGYR2024_P01232026_01102026/OP_DTL_OWNRSHP_PGYR2024_P01232026_01102026.csv"
+)
 
 
 def _metastore_payload(distribution_id: str = DISTRIBUTION_ID) -> dict[str, object]:
@@ -448,7 +454,7 @@ def test_get_medicaid_dataset_csv_url_returns_first_distribution_url() -> None:
         json=_medicaid_metastore_payload(),
     )
 
-    assert get_medicaid_dataset_csv_url(MEDICAID_SDUD_UUID) == MEDICAID_SDUD_CSV_URL
+    assert get_dkan_dataset_csv_url(MEDICAID_SDUD_UUID, base_url=MEDICAID_BASE_URL) == MEDICAID_SDUD_CSV_URL
 
 
 @respx.mock
@@ -465,7 +471,7 @@ def test_get_medicaid_dataset_csv_url_skips_distributions_without_download_url()
         },
     )
 
-    assert get_medicaid_dataset_csv_url(MEDICAID_SDUD_UUID) == MEDICAID_SDUD_CSV_URL
+    assert get_dkan_dataset_csv_url(MEDICAID_SDUD_UUID, base_url=MEDICAID_BASE_URL) == MEDICAID_SDUD_CSV_URL
 
 
 @respx.mock
@@ -476,7 +482,7 @@ def test_get_medicaid_dataset_csv_url_raises_when_no_download_url() -> None:
     )
 
     with pytest.raises(KeyError, match="downloadURL"):
-        get_medicaid_dataset_csv_url(MEDICAID_SDUD_UUID)
+        get_dkan_dataset_csv_url(MEDICAID_SDUD_UUID, base_url=MEDICAID_BASE_URL)
 
 
 @respx.mock
@@ -484,8 +490,8 @@ def test_get_medicaid_dataset_csv_url_rejects_non_object_payload() -> None:
     """A top-level array metastore response is malformed — surface loudly."""
     respx.get(f"{MEDICAID_BASE_URL}{MEDICAID_METASTORE_PATH}").respond(json=["unexpected"])
 
-    with pytest.raises(TypeError, match="medicaid metastore"):
-        get_medicaid_dataset_csv_url(MEDICAID_SDUD_UUID)
+    with pytest.raises(TypeError, match="DKAN metastore"):
+        get_dkan_dataset_csv_url(MEDICAID_SDUD_UUID, base_url=MEDICAID_BASE_URL)
 
 
 @respx.mock
@@ -496,4 +502,55 @@ def test_get_medicaid_dataset_csv_url_rejects_non_list_distribution() -> None:
     )
 
     with pytest.raises(TypeError, match="distribution"):
-        get_medicaid_dataset_csv_url(MEDICAID_SDUD_UUID)
+        get_dkan_dataset_csv_url(MEDICAID_SDUD_UUID, base_url=MEDICAID_BASE_URL)
+
+
+# ---------------------------------------------------------------------------
+# get_dkan_dataset_csv_url — openpaymentsdata.cms.gov via base_url override
+# ---------------------------------------------------------------------------
+
+
+def _open_payments_metastore_payload(*, download_url: str | None = OPEN_PAYMENTS_OWNERSHIP_CSV_URL) -> dict[str, object]:
+    """Return an Open Payments metastore record with one CSV distribution."""
+    distribution: dict[str, object] = {"@type": "dcat:Distribution", "format": "csv"}
+    if download_url is not None:
+        distribution["downloadURL"] = download_url
+    return {
+        "@type": "dcat:Dataset",
+        "identifier": OPEN_PAYMENTS_OWNERSHIP_UUID,
+        "title": "Ownership Payment Data - Detailed Dataset 2024 Reporting Year",
+        "distribution": [distribution],
+    }
+
+
+@respx.mock
+def test_get_dkan_dataset_csv_url_routes_open_payments_host() -> None:
+    """``base_url=OPEN_PAYMENTS_BASE_URL`` hits openpaymentsdata.cms.gov, not data.medicaid.gov.
+
+    This is the load-bearing test for the host-parameterization refactor:
+    without it, the function would silently fall back to a single hard-coded
+    host and Open Payments calls would 404 against the Medicaid metastore.
+    """
+    op_route = respx.get(f"{OPEN_PAYMENTS_BASE_URL}{OPEN_PAYMENTS_METASTORE_PATH}").respond(
+        json=_open_payments_metastore_payload(),
+    )
+    medicaid_route = respx.get(f"{MEDICAID_BASE_URL}{OPEN_PAYMENTS_METASTORE_PATH}").respond(
+        json=_open_payments_metastore_payload(download_url="https://wrong.example/should-not-be-hit.csv"),
+    )
+
+    url = get_dkan_dataset_csv_url(OPEN_PAYMENTS_OWNERSHIP_UUID, base_url=OPEN_PAYMENTS_BASE_URL)
+
+    assert url == OPEN_PAYMENTS_OWNERSHIP_CSV_URL
+    assert op_route.call_count == 1
+    assert medicaid_route.call_count == 0
+
+
+@respx.mock
+def test_get_dkan_dataset_csv_url_open_payments_raises_when_no_download_url() -> None:
+    """An Open Payments record with no downloadURL surfaces as a `KeyError`."""
+    respx.get(f"{OPEN_PAYMENTS_BASE_URL}{OPEN_PAYMENTS_METASTORE_PATH}").respond(
+        json=_open_payments_metastore_payload(download_url=None),
+    )
+
+    with pytest.raises(KeyError, match="downloadURL"):
+        get_dkan_dataset_csv_url(OPEN_PAYMENTS_OWNERSHIP_UUID, base_url=OPEN_PAYMENTS_BASE_URL)
