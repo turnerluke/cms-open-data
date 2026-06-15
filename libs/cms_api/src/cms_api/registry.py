@@ -22,18 +22,21 @@ if TYPE_CHECKING:
 # `libs/cms_api/src/cms_api/registry.py` -> `libs/cms_api/datasets.toml`.
 _DATASETS_TOML = Path(__file__).resolve().parents[2] / "datasets.toml"
 
-SourceLiteral = Literal["socrata", "healthcare_gov", "dkan_provider_data", "dkan_data_api_bulk"]
+SourceLiteral = Literal["socrata", "healthcare_gov", "dkan_provider_data", "dkan_data_api_bulk", "dkan_medicaid_bulk"]
 
 
 # Per-source required and forbidden fields. Required fields must be
 # truthy on the spec; forbidden fields must be left at their default
 # `None`. ``year`` is forbidden everywhere except ``dkan_data_api_bulk``,
-# where it's an optional year selector.
+# where it's an optional year selector — Medicaid bulk rows pick a year
+# at the dataset-id level (each Medicaid year is a separate UUID), so
+# ``year`` stays forbidden there.
 _SOURCE_FIELD_RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "socrata": (("dataset_id",), ("path", "year")),
     "healthcare_gov": (("path",), ("dataset_id", "year")),
     "dkan_provider_data": (("dataset_id",), ("path", "year")),
     "dkan_data_api_bulk": (("dataset_id",), ("path",)),
+    "dkan_medicaid_bulk": (("dataset_id",), ("path", "year")),
 }
 
 

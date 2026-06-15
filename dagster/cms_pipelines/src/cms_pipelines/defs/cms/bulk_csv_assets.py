@@ -18,9 +18,10 @@ would defeat the streaming win — but we reuse its on-disk layout
 ``external_location`` glob picks the files up unchanged.
 """
 
+from collections.abc import Callable
 from pathlib import Path
 
-from cms_api import DatasetSpec, get_data_api_csv_url, load_registry
+from cms_api import DatasetSpec, get_data_api_csv_url, get_medicaid_dataset_csv_url, load_registry
 import duckdb
 
 from cms_pipelines.defs.resources import resolve_raw_root
@@ -30,15 +31,26 @@ from dagster import AssetExecutionContext, AssetsDefinition, MaterializeResult, 
 _ASSET_PREFIX = "cms_"
 
 
-def _resolve_csv_url(spec: DatasetSpec) -> str:
-    """Look up the CSV download URL for ``spec`` in the DCAT catalog."""
-    # `DatasetSpec`'s cross-validator guarantees `dataset_id` is set on
-    # `dkan_data_api_bulk` rows, but mypy can't see through the post-init
-    # check — narrow defensively so the call site is unambiguous.
+def _resolve_data_api_csv_url(spec: DatasetSpec) -> str:
+    """Look up the CSV download URL for a data.cms.gov DCAT dataset."""
     if spec.dataset_id is None:
         msg = f"dkan_data_api_bulk dataset {spec.key!r} is missing `dataset_id`"
         raise RuntimeError(msg)
     return get_data_api_csv_url(spec.dataset_id, year=spec.year)
+
+
+def _resolve_medicaid_csv_url(spec: DatasetSpec) -> str:
+    """Look up the CSV download URL for a data.medicaid.gov DKAN dataset."""
+    if spec.dataset_id is None:
+        msg = f"dkan_medicaid_bulk dataset {spec.key!r} is missing `dataset_id`"
+        raise RuntimeError(msg)
+    return get_medicaid_dataset_csv_url(spec.dataset_id)
+
+
+_RESOLVERS: dict[str, Callable[[DatasetSpec], str]] = {
+    "dkan_data_api_bulk": _resolve_data_api_csv_url,
+    "dkan_medicaid_bulk": _resolve_medicaid_csv_url,
+}
 
 
 def _run_bulk_load(*, csv_url: str, out_path: Path) -> int:
@@ -66,6 +78,7 @@ def _run_bulk_load(*, csv_url: str, out_path: Path) -> int:
 def _build_asset(spec: DatasetSpec) -> AssetsDefinition:
     """Return a Dagster asset that streams ``spec``'s CSV into Parquet via DuckDB."""
     asset_name = f"{_ASSET_PREFIX}{spec.key}"
+    resolve = _RESOLVERS[spec.source]
 
     @asset(
         name=asset_name,
@@ -75,7 +88,7 @@ def _build_asset(spec: DatasetSpec) -> AssetsDefinition:
     )
     def _generated(context: AssetExecutionContext) -> MaterializeResult:
         out_path = Path(resolve_raw_root()) / asset_name / f"{context.run.run_id}.parquet"
-        csv_url = _resolve_csv_url(spec)
+        csv_url = resolve(spec)
         context.log.info("Bulk-loading %s from %s", asset_name, csv_url)
         row_count = _run_bulk_load(csv_url=csv_url, out_path=out_path)
         if row_count == 0:
@@ -95,11 +108,14 @@ def _build_asset(spec: DatasetSpec) -> AssetsDefinition:
     return _generated
 
 
-# Bind one module-level attribute per `dkan_data_api_bulk` registry row
-# so Dagster's `load_from_defs_folder` discovers them by name, the same
-# way the JSON-paginated `registry_assets.py` factory works.
+# Bind one module-level attribute per bulk-CSV registry row so Dagster's
+# `load_from_defs_folder` discovers them by name, the same way the
+# JSON-paginated `registry_assets.py` factory works. Both
+# `dkan_data_api_bulk` (data.cms.gov DCAT catalog) and `dkan_medicaid_bulk`
+# (data.medicaid.gov metastore) land here — `_RESOLVERS` decides which
+# client resolves the CSV URL.
 for _spec in load_registry():
-    if _spec.source != "dkan_data_api_bulk":
+    if _spec.source not in _RESOLVERS:
         continue
     globals()[f"{_ASSET_PREFIX}{_spec.key}"] = _build_asset(_spec)
 del _spec

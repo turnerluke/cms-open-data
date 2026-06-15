@@ -239,3 +239,26 @@ source = "dkan_data_api_bulk"
 dataset_id = "ccbc9a44-40d4-46b4-a709-5caa59212e50"
 description = "Medicare Outpatient Hospitals — by Provider and Service (CMS does not publish a provider-only outpatient summary; this is the closest analog to the inpatient by-provider dataset)."
 group = "cms_raw_provider_summary"
+
+# --- Drug spending & utilization ---------------------------------------------
+# Part B Spending by Drug rides the same DCAT-catalog bulk-CSV path as the
+# provider-summary datasets above. Medicaid SDUD lives on the separate
+# data.medicaid.gov DKAN deployment whose metastore exposes the CSV
+# downloadURL directly; one UUID per year, so partitioning is done at the
+# dataset_id level rather than via a `year` selector. PR-5's original
+# spec assumed both domains were still on Socrata — they have since
+# migrated to DKAN, hence the source change.
+
+[[dataset]]
+key = "medicare_part_b_spending_by_drug"
+source = "dkan_data_api_bulk"
+dataset_id = "76a714ad-3a2c-43ac-b76d-9dadf8f7d890"
+description = "Medicare Part B Spending by Drug (annual)."
+group = "cms_raw_drug_spending"
+
+[[dataset]]
+key = "medicaid_state_drug_utilization_2023"
+source = "dkan_medicaid_bulk"
+dataset_id = "d890d3a9-6b00-43fd-8b31-fcba4c8e2909"
+description = "Medicaid State Drug Utilization Data 2023 (data.medicaid.gov DKAN; one UUID per year)."
+group = "cms_raw_drug_spending"
