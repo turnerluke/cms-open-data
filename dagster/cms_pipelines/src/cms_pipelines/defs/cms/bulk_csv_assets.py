@@ -21,7 +21,14 @@ would defeat the streaming win — but we reuse its on-disk layout
 from collections.abc import Callable
 from pathlib import Path
 
-from cms_api import DatasetSpec, get_data_api_csv_url, get_medicaid_dataset_csv_url, load_registry
+from cms_api import (
+    MEDICAID_BASE_URL,
+    OPEN_PAYMENTS_BASE_URL,
+    DatasetSpec,
+    get_data_api_csv_url,
+    get_dkan_dataset_csv_url,
+    load_registry,
+)
 import duckdb
 
 from cms_pipelines.defs.resources import resolve_raw_root
@@ -44,12 +51,21 @@ def _resolve_medicaid_csv_url(spec: DatasetSpec) -> str:
     if spec.dataset_id is None:
         msg = f"dkan_medicaid_bulk dataset {spec.key!r} is missing `dataset_id`"
         raise RuntimeError(msg)
-    return get_medicaid_dataset_csv_url(spec.dataset_id)
+    return get_dkan_dataset_csv_url(spec.dataset_id, base_url=MEDICAID_BASE_URL)
+
+
+def _resolve_open_payments_csv_url(spec: DatasetSpec) -> str:
+    """Look up the CSV download URL for an openpaymentsdata.cms.gov dataset."""
+    if spec.dataset_id is None:
+        msg = f"dkan_open_payments_bulk dataset {spec.key!r} is missing `dataset_id`"
+        raise RuntimeError(msg)
+    return get_dkan_dataset_csv_url(spec.dataset_id, base_url=OPEN_PAYMENTS_BASE_URL)
 
 
 _RESOLVERS: dict[str, Callable[[DatasetSpec], str]] = {
     "dkan_data_api_bulk": _resolve_data_api_csv_url,
     "dkan_medicaid_bulk": _resolve_medicaid_csv_url,
+    "dkan_open_payments_bulk": _resolve_open_payments_csv_url,
 }
 
 
