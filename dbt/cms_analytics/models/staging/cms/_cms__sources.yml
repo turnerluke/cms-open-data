@@ -188,3 +188,18 @@ sources:
           Dagster asset. CMS does not publish a provider-only outpatient
           summary; this is the closest analog to
           `cms_medicare_inpatient_hospitals_by_provider`.
+      - name: cms_medicare_part_b_spending_by_drug
+        description: |
+          Medicare Part B Spending by Drug — annual (CMS data-api/v1
+          dataset `76a714ad-3a2c-43ac-b76d-9dadf8f7d890`). Landed via
+          DuckDB bulk-CSV by the
+          `cms_medicare_part_b_spending_by_drug` Dagster asset.
+      - name: cms_medicaid_state_drug_utilization_2023
+        description: |
+          Medicaid State Drug Utilization Data 2023 (data.medicaid.gov
+          DKAN dataset `d890d3a9-6b00-43fd-8b31-fcba4c8e2909`). Landed
+          via DuckDB bulk-CSV by the
+          `cms_medicaid_state_drug_utilization_2023` Dagster asset.
+          CMS partitions SDUD as one dataset UUID per calendar year;
+          this row tracks 2023 — additional years can be added as
+          separate registry rows.

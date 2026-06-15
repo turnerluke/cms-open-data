@@ -159,6 +159,34 @@ def test_dkan_data_api_bulk_spec_accepts_year() -> None:
     assert spec.year == 2023
 
 
+def test_dkan_medicaid_bulk_spec_requires_dataset_id() -> None:
+    """A dkan_medicaid_bulk row missing dataset_id fails validation."""
+    with pytest.raises(ValueError, match="dataset_id"):
+        DatasetSpec.model_validate(
+            {
+                "key": "bad_medicaid",
+                "source": "dkan_medicaid_bulk",
+                "description": "x",
+                "group": "cms_raw_drug_spending",
+            },
+        )
+
+
+def test_dkan_medicaid_bulk_spec_rejects_year() -> None:
+    """Medicaid bulk rows pick a year via per-year dataset UUIDs; `year` is forbidden."""
+    with pytest.raises(ValueError, match="must not set"):
+        DatasetSpec.model_validate(
+            {
+                "key": "weird_medicaid",
+                "source": "dkan_medicaid_bulk",
+                "dataset_id": "d890d3a9-6b00-43fd-8b31-fcba4c8e2909",
+                "year": 2023,
+                "description": "x",
+                "group": "cms_raw_drug_spending",
+            },
+        )
+
+
 def test_socrata_spec_rejects_year() -> None:
     """`year` is only valid for `dkan_data_api_bulk`; setting it on Socrata is a mistake."""
     with pytest.raises(ValueError, match="must not set"):

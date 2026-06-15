@@ -48,8 +48,10 @@ if TYPE_CHECKING:
 
 
 PROVIDER_DATA_BASE_URL = "https://data.cms.gov"
+MEDICAID_BASE_URL = "https://data.medicaid.gov"
 _METASTORE_PATH_TEMPLATE = "/provider-data/api/1/metastore/schemas/dataset/items/{dataset_id}"
 _DATASTORE_PATH_TEMPLATE = "/provider-data/api/1/datastore/query/{distribution_id}"
+_MEDICAID_METASTORE_PATH_TEMPLATE = "/api/1/metastore/schemas/dataset/items/{dataset_id}"
 _DATA_JSON_PATH = "/data.json"
 _CSV_MEDIA_TYPE = "text/csv"
 _DATASET_ID_URL_TEMPLATE = "/data-api/v1/dataset/{dataset_id}"
@@ -243,3 +245,42 @@ def get_data_api_csv_url(dataset_id: str, *, year: int | None = None) -> str:
         msg = f"dataset {dataset_id!r} has no CSV distribution for year {year}; available: {available}"
         raise KeyError(msg)
     return by_year[year]
+
+
+def get_medicaid_dataset_csv_url(dataset_id: str) -> str:
+    """Return the CSV ``downloadURL`` for a ``data.medicaid.gov`` DKAN dataset.
+
+    Medicaid datasets (SDUD per year, NADAC, …) are published on a separate
+    DKAN deployment whose metastore is at ``/api/1/metastore/...`` (no
+    ``/provider-data`` prefix). Each per-year dataset carries a single CSV
+    distribution under a static ``download.medicaid.gov`` URL.
+
+    Args:
+        dataset_id: Dataset UUID (e.g.
+            ``"d890d3a9-6b00-43fd-8b31-fcba4c8e2909"`` for State Drug
+            Utilization Data 2023).
+
+    Raises:
+        KeyError: The metastore record has no distribution carrying a
+            ``downloadURL`` string.
+        TypeError: The metastore payload is shaped unexpectedly.
+
+    """
+    path = _MEDICAID_METASTORE_PATH_TEMPLATE.format(dataset_id=dataset_id)
+    with build_client(base_url=MEDICAID_BASE_URL) as client:
+        payload: JsonValue = request_json(client, "GET", path)
+    if not isinstance(payload, dict):
+        msg = f"expected medicaid metastore payload to be an object, got {type(payload).__name__}"
+        raise TypeError(msg)
+    distributions: JsonValue = payload.get("distribution", [])
+    if not isinstance(distributions, list):
+        msg = f"expected `distribution` to be a list, got {type(distributions).__name__}"
+        raise TypeError(msg)
+    for entry in distributions:
+        if not isinstance(entry, dict):
+            continue
+        url: JsonValue = entry.get("downloadURL")
+        if isinstance(url, str) and url:
+            return url
+    msg = f"medicaid dataset {dataset_id!r} has no distribution with a downloadURL"
+    raise KeyError(msg)

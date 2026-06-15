@@ -1,6 +1,12 @@
 """Tests for the DKAN Provider Data Catalog client."""
 
-from cms_api.dkan import PROVIDER_DATA_BASE_URL, get_data_api_csv_url, iter_provider_data_catalog
+from cms_api.dkan import (
+    MEDICAID_BASE_URL,
+    PROVIDER_DATA_BASE_URL,
+    get_data_api_csv_url,
+    get_medicaid_dataset_csv_url,
+    iter_provider_data_catalog,
+)
 import httpx
 import respx
 
@@ -15,6 +21,9 @@ DATA_JSON_PATH = "/data.json"
 BULK_DATASET_UUID = "8889d81e-2ee7-448f-8713-f071038289b5"
 BULK_CSV_URL_2023 = "https://data.cms.gov/sites/default/files/2024-05/uuid-2023/MUP_PHY_2023.csv"
 BULK_CSV_URL_2024 = "https://data.cms.gov/sites/default/files/2026-05/uuid-2024/MUP_PHY_2024.csv"
+MEDICAID_SDUD_UUID = "d890d3a9-6b00-43fd-8b31-fcba4c8e2909"
+MEDICAID_METASTORE_PATH = f"/api/1/metastore/schemas/dataset/items/{MEDICAID_SDUD_UUID}"
+MEDICAID_SDUD_CSV_URL = "https://download.medicaid.gov/data/sdud-2023-updated.csv"
 
 
 def _metastore_payload(distribution_id: str = DISTRIBUTION_ID) -> dict[str, object]:
@@ -409,3 +418,82 @@ def test_get_data_api_csv_url_ignores_distributions_without_year() -> None:
     )
 
     assert get_data_api_csv_url(BULK_DATASET_UUID) == BULK_CSV_URL_2023
+
+
+# ---------------------------------------------------------------------------
+# get_medicaid_dataset_csv_url — data.medicaid.gov metastore CSV resolution
+# ---------------------------------------------------------------------------
+
+
+def _medicaid_metastore_payload(*, download_url: str | None = MEDICAID_SDUD_CSV_URL) -> dict[str, object]:
+    """Return a medicaid metastore record whose first distribution carries `download_url`."""
+    distribution: dict[str, object] = {
+        "@type": "dcat:Distribution",
+        "format": "csv",
+    }
+    if download_url is not None:
+        distribution["downloadURL"] = download_url
+    return {
+        "@type": "dcat:Dataset",
+        "identifier": MEDICAID_SDUD_UUID,
+        "title": "State Drug Utilization Data 2023",
+        "distribution": [distribution],
+    }
+
+
+@respx.mock
+def test_get_medicaid_dataset_csv_url_returns_first_distribution_url() -> None:
+    """The first distribution's `downloadURL` is returned verbatim."""
+    respx.get(f"{MEDICAID_BASE_URL}{MEDICAID_METASTORE_PATH}").respond(
+        json=_medicaid_metastore_payload(),
+    )
+
+    assert get_medicaid_dataset_csv_url(MEDICAID_SDUD_UUID) == MEDICAID_SDUD_CSV_URL
+
+
+@respx.mock
+def test_get_medicaid_dataset_csv_url_skips_distributions_without_download_url() -> None:
+    """A leading distribution missing `downloadURL` is skipped, not raised on."""
+    respx.get(f"{MEDICAID_BASE_URL}{MEDICAID_METASTORE_PATH}").respond(
+        json={
+            "@type": "dcat:Dataset",
+            "identifier": MEDICAID_SDUD_UUID,
+            "distribution": [
+                {"@type": "dcat:Distribution", "format": "csv"},
+                {"@type": "dcat:Distribution", "downloadURL": MEDICAID_SDUD_CSV_URL},
+            ],
+        },
+    )
+
+    assert get_medicaid_dataset_csv_url(MEDICAID_SDUD_UUID) == MEDICAID_SDUD_CSV_URL
+
+
+@respx.mock
+def test_get_medicaid_dataset_csv_url_raises_when_no_download_url() -> None:
+    """Every distribution lacking `downloadURL` is a `KeyError`, not a silent fallback."""
+    respx.get(f"{MEDICAID_BASE_URL}{MEDICAID_METASTORE_PATH}").respond(
+        json=_medicaid_metastore_payload(download_url=None),
+    )
+
+    with pytest.raises(KeyError, match="downloadURL"):
+        get_medicaid_dataset_csv_url(MEDICAID_SDUD_UUID)
+
+
+@respx.mock
+def test_get_medicaid_dataset_csv_url_rejects_non_object_payload() -> None:
+    """A top-level array metastore response is malformed — surface loudly."""
+    respx.get(f"{MEDICAID_BASE_URL}{MEDICAID_METASTORE_PATH}").respond(json=["unexpected"])
+
+    with pytest.raises(TypeError, match="medicaid metastore"):
+        get_medicaid_dataset_csv_url(MEDICAID_SDUD_UUID)
+
+
+@respx.mock
+def test_get_medicaid_dataset_csv_url_rejects_non_list_distribution() -> None:
+    """`distribution` must be a list — anything else is malformed."""
+    respx.get(f"{MEDICAID_BASE_URL}{MEDICAID_METASTORE_PATH}").respond(
+        json={"@type": "dcat:Dataset", "distribution": {"oops": "object"}},
+    )
+
+    with pytest.raises(TypeError, match="distribution"):
+        get_medicaid_dataset_csv_url(MEDICAID_SDUD_UUID)
