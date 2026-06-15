@@ -21,8 +21,13 @@ _DEFAULT_RAW_ROOT = _REPO_ROOT / "data" / "raw"
 CMS_RAW_ROOT_ENV = "CMS_RAW_ROOT"
 
 
-def _resolve_raw_root() -> str:
-    """Resolve the raw-data root from the env var, falling back to ``data/raw/``."""
+def resolve_raw_root() -> str:
+    """Resolve the raw-data root from the env var, falling back to ``data/raw/``.
+
+    Shared by the Parquet IO manager and by assets that write Parquet
+    directly (e.g. the DuckDB bulk-CSV loader), so both populate the same
+    on-disk layout dbt's ``external_location`` already targets.
+    """
     return os.environ.get(CMS_RAW_ROOT_ENV, str(_DEFAULT_RAW_ROOT))
 
 
@@ -37,6 +42,6 @@ def shared_resources() -> Definitions:
     """
     return Definitions(
         resources={
-            "parquet_io_manager": ParquetIOManager(root=_resolve_raw_root()),
+            "parquet_io_manager": ParquetIOManager(root=resolve_raw_root()),
         },
     )

@@ -1,6 +1,6 @@
 """Tests for the DKAN Provider Data Catalog client."""
 
-from cms_api.dkan import PROVIDER_DATA_BASE_URL, iter_provider_data_catalog
+from cms_api.dkan import PROVIDER_DATA_BASE_URL, get_data_api_csv_url, iter_provider_data_catalog
 import httpx
 import respx
 
@@ -11,6 +11,10 @@ DATASET_ID = "xubh-q36u"  # Hospital General Information
 DISTRIBUTION_ID = "11111111-2222-3333-4444-555555555555"
 METASTORE_PATH = f"/provider-data/api/1/metastore/schemas/dataset/items/{DATASET_ID}"
 DATASTORE_PATH = f"/provider-data/api/1/datastore/query/{DISTRIBUTION_ID}"
+DATA_JSON_PATH = "/data.json"
+BULK_DATASET_UUID = "8889d81e-2ee7-448f-8713-f071038289b5"
+BULK_CSV_URL_2023 = "https://data.cms.gov/sites/default/files/2024-05/uuid-2023/MUP_PHY_2023.csv"
+BULK_CSV_URL_2024 = "https://data.cms.gov/sites/default/files/2026-05/uuid-2024/MUP_PHY_2024.csv"
 
 
 def _metastore_payload(distribution_id: str = DISTRIBUTION_ID) -> dict[str, object]:
@@ -204,3 +208,204 @@ def test_iter_provider_data_catalog_does_not_retry_on_4xx() -> None:
         list(iter_provider_data_catalog(DATASET_ID, batch_size=10))
 
     assert route.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# get_data_api_csv_url — DCAT-catalog-based CSV resolution
+# ---------------------------------------------------------------------------
+
+
+def _csv_distribution(
+    *,
+    year: int,
+    url: str,
+    media_type: str | None = "text/csv",
+) -> dict[str, object]:
+    """Build a fake DCAT distribution shaped like the real `data.json` entries."""
+    entry: dict[str, object] = {
+        "@type": "dcat:Distribution",
+        "title": f"Medicare Physician — by Provider : {year}-12-01",
+        "modified": f"{year + 1}-05-21",
+        "temporal": f"{year}-01-01/{year}-12-31",
+        "downloadURL": url,
+    }
+    if media_type is not None:
+        entry["mediaType"] = media_type
+    return entry
+
+
+def _data_json_payload(
+    *, dataset_uuid: str = BULK_DATASET_UUID, distributions: list[dict[str, object]] | None = None
+) -> dict[str, object]:
+    """Wrap a list of distributions in the DCAT envelope `data.json` returns."""
+    return {
+        "@context": "https://project-open-data.cfo.gov/v1.1/schema/catalog.jsonld",
+        "@type": "dcat:Catalog",
+        "dataset": [
+            {
+                "@type": "dcat:Dataset",
+                "title": "Medicare Physician & Other Practitioners — by Provider",
+                "identifier": f"https://data.cms.gov/data-api/v1/dataset/{dataset_uuid}/data-viewer",
+                "distribution": distributions if distributions is not None else [],
+            },
+        ],
+    }
+
+
+def _stub_data_json(payload: dict[str, object]) -> None:
+    """Install a respx route that serves a fake DCAT payload at /data.json."""
+    respx.get(f"{PROVIDER_DATA_BASE_URL}{DATA_JSON_PATH}").respond(json=payload)
+
+
+@respx.mock
+def test_get_data_api_csv_url_returns_latest_year_by_default() -> None:
+    """With no `year=` argument, the highest-year CSV distribution wins."""
+    _stub_data_json(
+        _data_json_payload(
+            distributions=[
+                _csv_distribution(year=2023, url=BULK_CSV_URL_2023),
+                _csv_distribution(year=2024, url=BULK_CSV_URL_2024),
+            ],
+        ),
+    )
+
+    assert get_data_api_csv_url(BULK_DATASET_UUID) == BULK_CSV_URL_2024
+
+
+@respx.mock
+def test_get_data_api_csv_url_honors_explicit_year() -> None:
+    """An explicit `year=` selects that exact distribution, not the latest."""
+    _stub_data_json(
+        _data_json_payload(
+            distributions=[
+                _csv_distribution(year=2023, url=BULK_CSV_URL_2023),
+                _csv_distribution(year=2024, url=BULK_CSV_URL_2024),
+            ],
+        ),
+    )
+
+    assert get_data_api_csv_url(BULK_DATASET_UUID, year=2023) == BULK_CSV_URL_2023
+
+
+@respx.mock
+def test_get_data_api_csv_url_ignores_non_csv_distributions() -> None:
+    """Distributions without `mediaType: text/csv` are skipped silently."""
+    pdf_url = "https://data.cms.gov/sites/default/files/2024/data_dictionary.pdf"
+    _stub_data_json(
+        _data_json_payload(
+            distributions=[
+                {
+                    "@type": "dcat:Distribution",
+                    "title": "Data Dictionary",
+                    "mediaType": "application/pdf",
+                    "downloadURL": pdf_url,
+                    "temporal": "2023-01-01/2023-12-31",
+                },
+                _csv_distribution(year=2023, url=BULK_CSV_URL_2023),
+            ],
+        ),
+    )
+
+    assert get_data_api_csv_url(BULK_DATASET_UUID) == BULK_CSV_URL_2023
+
+
+@respx.mock
+def test_get_data_api_csv_url_skips_distributions_without_download_url() -> None:
+    """API-only `accessURL` entries (no direct file) are filtered out."""
+    _stub_data_json(
+        _data_json_payload(
+            distributions=[
+                {
+                    "@type": "dcat:Distribution",
+                    "title": "API entry",
+                    "mediaType": "text/csv",
+                    "accessURL": "https://data.cms.gov/data-api/v1/dataset-resources/abc",
+                    "temporal": "2024-01-01/2024-12-31",
+                },
+                _csv_distribution(year=2023, url=BULK_CSV_URL_2023),
+            ],
+        ),
+    )
+
+    assert get_data_api_csv_url(BULK_DATASET_UUID) == BULK_CSV_URL_2023
+
+
+@respx.mock
+def test_get_data_api_csv_url_raises_when_dataset_missing() -> None:
+    """A UUID not present in `data.json` is a `KeyError`, not a transport error."""
+    _stub_data_json({"@type": "dcat:Catalog", "dataset": []})
+
+    with pytest.raises(KeyError, match=r"data\.json"):
+        get_data_api_csv_url(BULK_DATASET_UUID)
+
+
+@respx.mock
+def test_get_data_api_csv_url_raises_when_no_csv_distribution() -> None:
+    """A dataset with only non-CSV distributions raises `KeyError` (not silent fallback)."""
+    _stub_data_json(
+        _data_json_payload(
+            distributions=[
+                {
+                    "@type": "dcat:Distribution",
+                    "mediaType": "application/pdf",
+                    "downloadURL": "https://data.cms.gov/x.pdf",
+                    "temporal": "2024-01-01/2024-12-31",
+                },
+            ],
+        ),
+    )
+
+    with pytest.raises(KeyError, match="no CSV distribution"):
+        get_data_api_csv_url(BULK_DATASET_UUID)
+
+
+@respx.mock
+def test_get_data_api_csv_url_raises_when_year_unavailable() -> None:
+    """An explicit `year=` for which no CSV exists raises `KeyError` listing available years."""
+    _stub_data_json(
+        _data_json_payload(
+            distributions=[_csv_distribution(year=2023, url=BULK_CSV_URL_2023)],
+        ),
+    )
+
+    with pytest.raises(KeyError, match="2024"):
+        get_data_api_csv_url(BULK_DATASET_UUID, year=2024)
+
+
+@respx.mock
+def test_get_data_api_csv_url_rejects_non_object_payload() -> None:
+    """A top-level array `data.json` is a malformed response — surface it loudly."""
+    respx.get(f"{PROVIDER_DATA_BASE_URL}{DATA_JSON_PATH}").respond(json=["unexpected"])
+
+    with pytest.raises(TypeError, match=r"data\.json"):
+        get_data_api_csv_url(BULK_DATASET_UUID)
+
+
+@respx.mock
+def test_get_data_api_csv_url_rejects_non_list_dataset_field() -> None:
+    """`dataset` must be a list — anything else is malformed."""
+    respx.get(f"{PROVIDER_DATA_BASE_URL}{DATA_JSON_PATH}").respond(
+        json={"@type": "dcat:Catalog", "dataset": {"oops": "object"}},
+    )
+
+    with pytest.raises(TypeError, match="dataset"):
+        get_data_api_csv_url(BULK_DATASET_UUID)
+
+
+@respx.mock
+def test_get_data_api_csv_url_ignores_distributions_without_year() -> None:
+    """A distribution missing `temporal` (or with a non-year value) is skipped."""
+    _stub_data_json(
+        _data_json_payload(
+            distributions=[
+                {
+                    "@type": "dcat:Distribution",
+                    "mediaType": "text/csv",
+                    "downloadURL": "https://data.cms.gov/no-temporal.csv",
+                },
+                _csv_distribution(year=2023, url=BULK_CSV_URL_2023),
+            ],
+        ),
+    )
+
+    assert get_data_api_csv_url(BULK_DATASET_UUID) == BULK_CSV_URL_2023

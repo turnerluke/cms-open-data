@@ -84,6 +84,11 @@ def _build_asset(spec: DatasetSpec) -> AssetsDefinition:
 # same mechanism that picks up `@asset`-decorated module-level functions
 # in the hand-written modules; the difference is the names are computed
 # at import time from the registry.
+#
+# Sources without a fetcher in `_FETCHERS` (e.g. `dkan_data_api_bulk`,
+# which is handled in `bulk_csv_assets.py`) are intentionally skipped.
 for _spec in load_registry():
+    if _spec.source not in _FETCHERS:
+        continue
     globals()[f"{_ASSET_PREFIX}{_spec.key}"] = _build_asset(_spec)
 del _spec

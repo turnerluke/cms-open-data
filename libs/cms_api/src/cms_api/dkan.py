@@ -21,6 +21,16 @@ DKAN's datastore is a different backend with different pagination semantics:
 
 We still reuse ``cms_api._http`` so retry/backoff/headers behave the same
 across clients.
+
+# Bulk CSV (`/data.json`)
+
+The provider-summary-by-type-of-service datasets (Medicare Physician,
+Part D Prescribers, Inpatient/Outpatient Hospitals) live on a *second*
+DKAN deployment at ``data.cms.gov/data-api/v1/`` whose per-dataset
+endpoint is currently 404. The reliable way to discover their per-year
+CSV download URLs is the DCAT catalog at ``/data.json``; that's what
+``get_data_api_csv_url`` resolves against. Each yearly distribution
+exposes a ``downloadURL`` we can hand straight to DuckDB.
 """
 
 from __future__ import annotations
@@ -40,6 +50,10 @@ if TYPE_CHECKING:
 PROVIDER_DATA_BASE_URL = "https://data.cms.gov"
 _METASTORE_PATH_TEMPLATE = "/provider-data/api/1/metastore/schemas/dataset/items/{dataset_id}"
 _DATASTORE_PATH_TEMPLATE = "/provider-data/api/1/datastore/query/{distribution_id}"
+_DATA_JSON_PATH = "/data.json"
+_CSV_MEDIA_TYPE = "text/csv"
+_DATASET_ID_URL_TEMPLATE = "/data-api/v1/dataset/{dataset_id}"
+_YEAR_PREFIX_LEN = 4  # data.json `temporal` values start with a 4-digit year.
 DEFAULT_BATCH_SIZE = 1000
 
 
@@ -124,3 +138,108 @@ def iter_provider_data_catalog(
             if len(rows) < batch_size:
                 return
             offset += batch_size
+
+
+def _distribution_year(distribution: JsonObject) -> int | None:
+    """Return the start-year of a distribution's ``temporal`` field, or None.
+
+    CSV distributions in ``data.json`` annotate their coverage as
+    ``YYYY-01-01/YYYY-12-31``; the start year is the data year we use
+    to pick "latest" or to satisfy an explicit ``year=`` request.
+    Distributions without a parseable temporal range are ignored by the
+    selector (returned as ``None``).
+    """
+    temporal: JsonValue = distribution.get("temporal")
+    if not isinstance(temporal, str) or len(temporal) < _YEAR_PREFIX_LEN:
+        return None
+    candidate = temporal[:_YEAR_PREFIX_LEN]
+    if not candidate.isdigit():
+        return None
+    return int(candidate)
+
+
+def _iter_csv_distributions(dataset: JsonObject) -> Iterator[tuple[int, str]]:
+    """Yield ``(year, downloadURL)`` for each CSV distribution on ``dataset``.
+
+    Non-CSV distributions, distributions without a string ``downloadURL``,
+    and distributions whose ``temporal`` field isn't a recognisable year
+    range are skipped.
+    """
+    distributions: JsonValue = dataset.get("distribution", [])
+    if not isinstance(distributions, list):
+        return
+    for entry in distributions:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("mediaType") != _CSV_MEDIA_TYPE:
+            continue
+        url: JsonValue = entry.get("downloadURL")
+        if not isinstance(url, str) or not url:
+            continue
+        year = _distribution_year(entry)
+        if year is None:
+            continue
+        yield year, url
+
+
+def _find_dataset(catalog: JsonValue, dataset_id: str) -> JsonObject:
+    """Return the catalog entry whose ``identifier`` carries ``dataset_id``.
+
+    The DCAT catalog stores ``identifier`` as a full URL such as
+    ``https://data.cms.gov/data-api/v1/dataset/<uuid>/data-viewer``; we
+    match on the ``/dataset/<uuid>`` segment so callers can pass the bare
+    UUID. Missing-dataset failures are surfaced as ``KeyError`` so they
+    don't look like transport errors at the call site.
+    """
+    if not isinstance(catalog, dict):
+        msg = f"expected data.json payload to be an object, got {type(catalog).__name__}"
+        raise TypeError(msg)
+    datasets: JsonValue = catalog.get("dataset", [])
+    if not isinstance(datasets, list):
+        msg = f"expected data.json `dataset` to be a list, got {type(datasets).__name__}"
+        raise TypeError(msg)
+    needle = _DATASET_ID_URL_TEMPLATE.format(dataset_id=dataset_id)
+    for entry in datasets:
+        if not isinstance(entry, dict):
+            continue
+        identifier: JsonValue = entry.get("identifier")
+        if isinstance(identifier, str) and needle in identifier:
+            return entry
+    msg = f"no dataset in data.json with identifier matching {dataset_id!r}"
+    raise KeyError(msg)
+
+
+def get_data_api_csv_url(dataset_id: str, *, year: int | None = None) -> str:
+    """Return the CSV ``downloadURL`` for a CMS data-api/v1 dataset.
+
+    Looks the dataset up in the DCAT catalog at
+    ``https://data.cms.gov/data.json``, filters to ``text/csv``
+    distributions, and returns either the requested ``year``'s URL or
+    the most recent year available.
+
+    Args:
+        dataset_id: Bare dataset UUID (e.g.
+            ``"8889d81e-2ee7-448f-8713-f071038289b5"`` for Medicare
+            Physician & Other Practitioners — by Provider).
+        year: Optional 4-digit data year. When ``None``, the highest
+            available year is returned.
+
+    Raises:
+        KeyError: The dataset is not in the catalog, or has no CSV
+            distribution for the requested year.
+
+    """
+    with build_client(base_url=PROVIDER_DATA_BASE_URL) as client:
+        catalog: JsonValue = request_json(client, "GET", _DATA_JSON_PATH)
+    dataset = _find_dataset(catalog, dataset_id)
+    by_year = dict(_iter_csv_distributions(dataset))
+    if not by_year:
+        msg = f"dataset {dataset_id!r} has no CSV distribution in data.json"
+        raise KeyError(msg)
+    if year is None:
+        return by_year[max(by_year)]
+    if year not in by_year:
+        available = sorted(by_year)
+        msg = f"dataset {dataset_id!r} has no CSV distribution for year {year}; available: {available}"
+        raise KeyError(msg)
+    return by_year[year]

@@ -129,3 +129,62 @@ sources:
           Long-Term Care Hospital — General Information (DKAN dataset
           `azum-44iv`). Landed by the
           `cms_long_term_care_hospital_general` Dagster asset.
+      - name: cms_medicare_physician_by_provider
+        description: |
+          Medicare Physician & Other Practitioners — by Provider
+          (CMS data-api/v1 dataset
+          `8889d81e-2ee7-448f-8713-f071038289b5`). Landed via DuckDB
+          bulk-CSV by the `cms_medicare_physician_by_provider`
+          Dagster asset; ~1.1M rows per year.
+      - name: cms_medicare_physician_by_provider_and_service
+        description: |
+          Medicare Physician & Other Practitioners — by Provider and
+          Service (CMS data-api/v1 dataset
+          `92396110-2aed-4d63-a6a2-5d6207d46a29`). Landed via DuckDB
+          bulk-CSV by the `cms_medicare_physician_by_provider_and_service`
+          Dagster asset; ~10M rows per year.
+      - name: cms_medicare_physician_by_geography_and_service
+        description: |
+          Medicare Physician & Other Practitioners — by Geography and
+          Service (CMS data-api/v1 dataset
+          `6fea9d79-0129-4e4c-b1b8-23cd86a4f435`). Landed via DuckDB
+          bulk-CSV by the `cms_medicare_physician_by_geography_and_service`
+          Dagster asset.
+      - name: cms_medicare_part_d_prescribers_by_provider
+        description: |
+          Medicare Part D Prescribers — by Provider (CMS data-api/v1
+          dataset `14d8e8a9-7e9b-4370-a044-bf97c46b4b44`). Landed via
+          DuckDB bulk-CSV by the
+          `cms_medicare_part_d_prescribers_by_provider` Dagster asset.
+      - name: cms_medicare_part_d_prescribers_by_provider_and_drug
+        description: |
+          Medicare Part D Prescribers — by Provider and Drug (CMS
+          data-api/v1 dataset
+          `9552739e-3d05-4c1b-8eff-ecabf391e2e5`). Landed via DuckDB
+          bulk-CSV by the
+          `cms_medicare_part_d_prescribers_by_provider_and_drug` Dagster
+          asset.
+      - name: cms_medicare_part_d_prescribers_by_geography_and_drug
+        description: |
+          Medicare Part D Prescribers — by Geography and Drug (CMS
+          data-api/v1 dataset
+          `c8ea3f8e-3a09-4fea-86f2-8902fb4b0920`). Landed via DuckDB
+          bulk-CSV by the
+          `cms_medicare_part_d_prescribers_by_geography_and_drug`
+          Dagster asset.
+      - name: cms_medicare_inpatient_hospitals_by_provider
+        description: |
+          Medicare Inpatient Hospitals — by Provider (CMS data-api/v1
+          dataset `ee6fb1a5-39b9-46b3-a980-a7284551a732`). Landed via
+          DuckDB bulk-CSV by the
+          `cms_medicare_inpatient_hospitals_by_provider` Dagster asset.
+      - name: cms_medicare_outpatient_hospitals_by_provider_and_service
+        description: |
+          Medicare Outpatient Hospitals — by Provider and Service (CMS
+          data-api/v1 dataset
+          `ccbc9a44-40d4-46b4-a709-5caa59212e50`). Landed via DuckDB
+          bulk-CSV by the
+          `cms_medicare_outpatient_hospitals_by_provider_and_service`
+          Dagster asset. CMS does not publish a provider-only outpatient
+          summary; this is the closest analog to
+          `cms_medicare_inpatient_hospitals_by_provider`.
