@@ -226,3 +226,33 @@ sources:
           `9ac4f7f8-b6e4-4d80-8410-4aba7e71dd02`). Landed via DuckDB
           bulk-CSV by the `cms_open_payments_ownership_2024` Dagster
           asset.
+      - name: cms_qhp_landscape_individual_medical_2026
+        description: |
+          QHP Landscape PY2026 Individual Medical (data.healthcare.gov
+          DKAN dataset `6fe7fb77-7291-4104-952f-7c7e2c5d0c45`).
+          Certified medical plans offered on the individual market by
+          county. Landed by the
+          `cms_qhp_landscape_individual_medical_2026` Dagster asset:
+          ZIP-bundled XLSX, extracted and streamed to Parquet via
+          DuckDB's `read_xlsx`. CMS partitions QHP Landscape at the
+          UUID level — one dataset per plan year.
+      - name: cms_qhp_landscape_individual_dental_2026
+        description: |
+          QHP Landscape PY2026 Individual Dental (data.healthcare.gov
+          DKAN dataset `0c494938-ccdb-412a-be89-9cb69fd82e28`).
+          Certified stand-alone dental plans on the individual market
+          by county. Landed by the
+          `cms_qhp_landscape_individual_dental_2026` Dagster asset.
+      - name: cms_qhp_landscape_shop_medical_2026
+        description: |
+          QHP Landscape PY2026 Medical SHOP (data.healthcare.gov DKAN
+          dataset `d1241e9c-2a73-435c-afb0-f231645b63c8`). Certified
+          medical plans on the Small Business Health Options Program
+          market by county. Landed by the
+          `cms_qhp_landscape_shop_medical_2026` Dagster asset.
+      - name: cms_qhp_landscape_shop_dental_2026
+        description: |
+          QHP Landscape PY2026 Dental SHOP (data.healthcare.gov DKAN
+          dataset `1e4852dd-a489-4ef0-ab71-b424bfca516e`). Certified
+          stand-alone dental plans on the SHOP market by county. Landed
+          by the `cms_qhp_landscape_shop_dental_2026` Dagster asset.

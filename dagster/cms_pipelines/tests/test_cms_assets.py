@@ -53,18 +53,25 @@ def _registry_asset(spec: DatasetSpec) -> AssetsDefinition:
     return getattr(registry_assets, f"cms_{spec.key}")
 
 
-_BULK_CSV_SOURCES = {"dkan_data_api_bulk", "dkan_medicaid_bulk", "dkan_open_payments_bulk"}
+_NON_REGISTRY_ASSET_SOURCES = {
+    "dkan_data_api_bulk",
+    "dkan_medicaid_bulk",
+    "dkan_open_payments_bulk",
+    "dkan_healthcare_gov_zip",
+}
 
 
 def test_one_asset_emitted_per_registry_row() -> None:
     """Every JSON-paginated registry row resolves to an `AssetsDefinition`.
 
-    Bulk-CSV rows (`dkan_data_api_bulk`, `dkan_medicaid_bulk`,
-    `dkan_open_payments_bulk`) live on the sibling `bulk_csv_assets`
-    module (different fetcher contract) so they're checked there instead.
+    Sources with a different fetcher contract live on peer modules and are
+    checked there instead: bulk-CSV (``dkan_data_api_bulk``,
+    ``dkan_medicaid_bulk``, ``dkan_open_payments_bulk``) on
+    ``bulk_csv_assets``; QHP ZIP-XLSX (``dkan_healthcare_gov_zip``) on
+    ``qhp_zip_assets``.
     """
     for spec in load_registry():
-        if spec.source in _BULK_CSV_SOURCES:
+        if spec.source in _NON_REGISTRY_ASSET_SOURCES:
             continue
         asset_def = _registry_asset(spec)
         assert isinstance(asset_def, AssetsDefinition)
