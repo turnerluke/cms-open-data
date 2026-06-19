@@ -187,6 +187,49 @@ def test_dkan_medicaid_bulk_spec_rejects_year() -> None:
         )
 
 
+def test_dkan_healthcare_gov_zip_spec_requires_dataset_id() -> None:
+    """A dkan_healthcare_gov_zip row missing dataset_id fails validation."""
+    with pytest.raises(ValueError, match="dataset_id"):
+        DatasetSpec.model_validate(
+            {
+                "key": "bad_qhp",
+                "source": "dkan_healthcare_gov_zip",
+                "description": "x",
+                "group": "cms_raw_marketplace",
+            },
+        )
+
+
+def test_dkan_healthcare_gov_zip_spec_rejects_year() -> None:
+    """QHP rows pick a plan year via per-year UUIDs; `year` is forbidden."""
+    with pytest.raises(ValueError, match="must not set"):
+        DatasetSpec.model_validate(
+            {
+                "key": "weird_qhp",
+                "source": "dkan_healthcare_gov_zip",
+                "dataset_id": "6fe7fb77-7291-4104-952f-7c7e2c5d0c45",
+                "year": 2026,
+                "description": "x",
+                "group": "cms_raw_marketplace",
+            },
+        )
+
+
+def test_dkan_healthcare_gov_zip_spec_rejects_path() -> None:
+    """A dkan_healthcare_gov_zip row with `path` set is malformed."""
+    with pytest.raises(ValueError, match="must not set"):
+        DatasetSpec.model_validate(
+            {
+                "key": "weird_qhp_path",
+                "source": "dkan_healthcare_gov_zip",
+                "dataset_id": "6fe7fb77-7291-4104-952f-7c7e2c5d0c45",
+                "path": "/api/x.json",
+                "description": "x",
+                "group": "cms_raw_marketplace",
+            },
+        )
+
+
 def test_socrata_spec_rejects_year() -> None:
     """`year` is only valid for `dkan_data_api_bulk`; setting it on Socrata is a mistake."""
     with pytest.raises(ValueError, match="must not set"):

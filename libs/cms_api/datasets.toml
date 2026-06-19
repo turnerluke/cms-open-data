@@ -9,6 +9,7 @@
 #   - socrata: dataset_id (Socrata 4x4)
 #   - healthcare_gov: path (e.g. "/api/glossary.json")
 #   - dkan_provider_data: dataset_id (Provider Data Catalog UUID/4x4)
+#   - dkan_healthcare_gov_zip: dataset_id (QHP Landscape ZIP-XLSX UUID)
 # Cross-field validation lives in `cms_api.registry.DatasetSpec`.
 
 [[dataset]]
@@ -293,3 +294,43 @@ source = "dkan_open_payments_bulk"
 dataset_id = "9ac4f7f8-b6e4-4d80-8410-4aba7e71dd02"
 description = "Open Payments — Physician Ownership and Investment Interests, program year 2024."
 group = "cms_raw_open_payments"
+
+# --- Marketplace QHP Landscape PUFs ------------------------------------------
+# data.healthcare.gov is its own bare-metastore DKAN (same `/api/1/` shape as
+# data.medicaid.gov + openpaymentsdata.cms.gov) but the QHP Landscape PUFs
+# distribute as ZIP-bundled XLSX, not direct CSV. The Dagster asset downloads
+# the ZIP, extracts the single XLSX, and streams it to Parquet via DuckDB's
+# excel extension (`read_xlsx`). Row 1 of every QHP XLSX is a metadata count
+# ("N displayed records"), so the loader reads from A2 with `stop_at_empty`.
+# Each plan year is a separate UUID; pinning PY2026 here matches the
+# Open Payments per-year pattern. The Marketplace API at
+# marketplace.api.healthcare.gov is a consumer plan-shopping surface (not
+# bulk-extractable) and intentionally not wired up.
+
+[[dataset]]
+key = "qhp_landscape_individual_medical_2026"
+source = "dkan_healthcare_gov_zip"
+dataset_id = "6fe7fb77-7291-4104-952f-7c7e2c5d0c45"
+description = "QHP Landscape PY2026 Individual Medical (certified medical plans on the individual market by county)."
+group = "cms_raw_marketplace"
+
+[[dataset]]
+key = "qhp_landscape_individual_dental_2026"
+source = "dkan_healthcare_gov_zip"
+dataset_id = "0c494938-ccdb-412a-be89-9cb69fd82e28"
+description = "QHP Landscape PY2026 Individual Dental (certified stand-alone dental plans on the individual market by county)."
+group = "cms_raw_marketplace"
+
+[[dataset]]
+key = "qhp_landscape_shop_medical_2026"
+source = "dkan_healthcare_gov_zip"
+dataset_id = "d1241e9c-2a73-435c-afb0-f231645b63c8"
+description = "QHP Landscape PY2026 Medical SHOP (certified medical plans on the Small Business Health Options Program market by county)."
+group = "cms_raw_marketplace"
+
+[[dataset]]
+key = "qhp_landscape_shop_dental_2026"
+source = "dkan_healthcare_gov_zip"
+dataset_id = "1e4852dd-a489-4ef0-ab71-b424bfca516e"
+description = "QHP Landscape PY2026 Dental SHOP (certified stand-alone dental plans on the SHOP market by county)."
+group = "cms_raw_marketplace"

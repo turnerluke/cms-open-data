@@ -12,7 +12,12 @@ useDefault = true
 description = "Allowlist for test files and example credentials"
 
 # Fake/mock credentials for unit testing purposes.
-paths = ['''.*tests/.*\.py$''', '''.*test_.*\.py$''']
+# datasets.toml is the public dataset registry — every value is a CMS
+# dataset id, asset key, or human description. Some snake_case keys
+# (e.g. ``qhp_landscape_individual_medical_2026``) trip gitleaks's
+# generic-api-key entropy heuristic, so we allowlist the file outright;
+# secrets cannot end up here by design.
+paths = ['''.*tests/.*\.py$''', '''.*test_.*\.py$''', '''.*libs/cms_api/datasets\.toml$''']
 
 regexes = [
     # AWS example credentials from official AWS documentation.

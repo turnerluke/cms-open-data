@@ -1,11 +1,13 @@
 """Tests for the DKAN Provider Data Catalog client."""
 
 from cms_api.dkan import (
+    HEALTHCARE_GOV_DKAN_BASE_URL,
     MEDICAID_BASE_URL,
     OPEN_PAYMENTS_BASE_URL,
     PROVIDER_DATA_BASE_URL,
     get_data_api_csv_url,
     get_dkan_dataset_csv_url,
+    get_dkan_dataset_zip_url,
     iter_provider_data_catalog,
 )
 import httpx
@@ -554,3 +556,156 @@ def test_get_dkan_dataset_csv_url_open_payments_raises_when_no_download_url() ->
 
     with pytest.raises(KeyError, match="downloadURL"):
         get_dkan_dataset_csv_url(OPEN_PAYMENTS_OWNERSHIP_UUID, base_url=OPEN_PAYMENTS_BASE_URL)
+
+
+# ---------------------------------------------------------------------------
+# get_dkan_dataset_zip_url — data.healthcare.gov QHP Landscape ZIP resolution
+# ---------------------------------------------------------------------------
+
+
+QHP_INDIVIDUAL_MEDICAL_UUID = "6fe7fb77-7291-4104-952f-7c7e2c5d0c45"
+QHP_METASTORE_PATH = f"/api/1/metastore/schemas/dataset/items/{QHP_INDIVIDUAL_MEDICAL_UUID}"
+QHP_INDIVIDUAL_MEDICAL_ZIP_URL = "https://data.healthcare.gov/datafile/py2026/individual_market_medical.zip"
+
+
+def _qhp_metastore_payload(
+    *,
+    distributions: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    """Build a QHP-style metastore record with the supplied distributions."""
+    return {
+        "@type": "dcat:Dataset",
+        "identifier": QHP_INDIVIDUAL_MEDICAL_UUID,
+        "title": "QHP Landscape PY2026 Individual Medical",
+        "distribution": distributions if distributions is not None else [],
+    }
+
+
+@respx.mock
+def test_get_dkan_dataset_zip_url_returns_zip_distribution_url() -> None:
+    """The first ZIP-format distribution's downloadURL is returned verbatim."""
+    respx.get(f"{HEALTHCARE_GOV_DKAN_BASE_URL}{QHP_METASTORE_PATH}").respond(
+        json=_qhp_metastore_payload(
+            distributions=[
+                {
+                    "@type": "dcat:Distribution",
+                    "format": "zip",
+                    "downloadURL": QHP_INDIVIDUAL_MEDICAL_ZIP_URL,
+                },
+            ],
+        ),
+    )
+
+    url = get_dkan_dataset_zip_url(QHP_INDIVIDUAL_MEDICAL_UUID, base_url=HEALTHCARE_GOV_DKAN_BASE_URL)
+
+    assert url == QHP_INDIVIDUAL_MEDICAL_ZIP_URL
+
+
+@respx.mock
+def test_get_dkan_dataset_zip_url_matches_on_media_type_when_format_missing() -> None:
+    """Distributions tagged only via mediaType=application/zip are still picked up.
+
+    DKAN has historically populated either `format` or `mediaType` (sometimes
+    both); we'd rather not 404 on a metastore record that only exposes
+    mediaType, since callers expect "give me the ZIP" not "give me the
+    distribution that happens to have a `format` key set".
+    """
+    respx.get(f"{HEALTHCARE_GOV_DKAN_BASE_URL}{QHP_METASTORE_PATH}").respond(
+        json=_qhp_metastore_payload(
+            distributions=[
+                {
+                    "@type": "dcat:Distribution",
+                    "mediaType": "application/zip",
+                    "downloadURL": QHP_INDIVIDUAL_MEDICAL_ZIP_URL,
+                },
+            ],
+        ),
+    )
+
+    url = get_dkan_dataset_zip_url(QHP_INDIVIDUAL_MEDICAL_UUID, base_url=HEALTHCARE_GOV_DKAN_BASE_URL)
+
+    assert url == QHP_INDIVIDUAL_MEDICAL_ZIP_URL
+
+
+@respx.mock
+def test_get_dkan_dataset_zip_url_skips_non_zip_distributions() -> None:
+    """A leading PDF distribution must not shadow the ZIP one — filter on format.
+
+    The CSV-flavored sibling `get_dkan_dataset_csv_url` returns the first
+    distribution unconditionally; the ZIP variant has to filter so a future
+    PDF instructions sibling doesn't get handed back as if it were the data.
+    """
+    respx.get(f"{HEALTHCARE_GOV_DKAN_BASE_URL}{QHP_METASTORE_PATH}").respond(
+        json=_qhp_metastore_payload(
+            distributions=[
+                {
+                    "@type": "dcat:Distribution",
+                    "format": "pdf",
+                    "downloadURL": "https://data.healthcare.gov/datafile/py2026/instructions.pdf",
+                },
+                {
+                    "@type": "dcat:Distribution",
+                    "format": "zip",
+                    "downloadURL": QHP_INDIVIDUAL_MEDICAL_ZIP_URL,
+                },
+            ],
+        ),
+    )
+
+    url = get_dkan_dataset_zip_url(QHP_INDIVIDUAL_MEDICAL_UUID, base_url=HEALTHCARE_GOV_DKAN_BASE_URL)
+
+    assert url == QHP_INDIVIDUAL_MEDICAL_ZIP_URL
+
+
+@respx.mock
+def test_get_dkan_dataset_zip_url_raises_when_no_zip_distribution() -> None:
+    """A dataset with no ZIP distribution raises `KeyError`, not a silent fallback."""
+    respx.get(f"{HEALTHCARE_GOV_DKAN_BASE_URL}{QHP_METASTORE_PATH}").respond(
+        json=_qhp_metastore_payload(
+            distributions=[
+                {
+                    "@type": "dcat:Distribution",
+                    "format": "pdf",
+                    "downloadURL": "https://data.healthcare.gov/datafile/py2026/instructions.pdf",
+                },
+            ],
+        ),
+    )
+
+    with pytest.raises(KeyError, match="ZIP distribution"):
+        get_dkan_dataset_zip_url(QHP_INDIVIDUAL_MEDICAL_UUID, base_url=HEALTHCARE_GOV_DKAN_BASE_URL)
+
+
+@respx.mock
+def test_get_dkan_dataset_zip_url_raises_when_zip_missing_download_url() -> None:
+    """A ZIP-format distribution without a downloadURL is also a KeyError."""
+    respx.get(f"{HEALTHCARE_GOV_DKAN_BASE_URL}{QHP_METASTORE_PATH}").respond(
+        json=_qhp_metastore_payload(
+            distributions=[
+                {"@type": "dcat:Distribution", "format": "zip"},
+            ],
+        ),
+    )
+
+    with pytest.raises(KeyError, match="ZIP distribution"):
+        get_dkan_dataset_zip_url(QHP_INDIVIDUAL_MEDICAL_UUID, base_url=HEALTHCARE_GOV_DKAN_BASE_URL)
+
+
+@respx.mock
+def test_get_dkan_dataset_zip_url_rejects_non_object_payload() -> None:
+    """A top-level array metastore response is malformed — surface loudly."""
+    respx.get(f"{HEALTHCARE_GOV_DKAN_BASE_URL}{QHP_METASTORE_PATH}").respond(json=["unexpected"])
+
+    with pytest.raises(TypeError, match="DKAN metastore"):
+        get_dkan_dataset_zip_url(QHP_INDIVIDUAL_MEDICAL_UUID, base_url=HEALTHCARE_GOV_DKAN_BASE_URL)
+
+
+@respx.mock
+def test_get_dkan_dataset_zip_url_rejects_non_list_distribution() -> None:
+    """`distribution` must be a list — anything else is malformed."""
+    respx.get(f"{HEALTHCARE_GOV_DKAN_BASE_URL}{QHP_METASTORE_PATH}").respond(
+        json={"@type": "dcat:Dataset", "distribution": {"oops": "object"}},
+    )
+
+    with pytest.raises(TypeError, match="distribution"):
+        get_dkan_dataset_zip_url(QHP_INDIVIDUAL_MEDICAL_UUID, base_url=HEALTHCARE_GOV_DKAN_BASE_URL)

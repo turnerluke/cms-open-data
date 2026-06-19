@@ -41,6 +41,15 @@ metastore record already contains a single CSV distribution with a
 direct ``downloadURL``, and CMS partitions by year at the dataset-UUID
 level (one UUID per program year). ``get_dkan_dataset_csv_url`` reads
 that downloadURL straight off the metastore for either host.
+
+# Bare-metastore bulk ZIP (QHP Landscape on healthcare.gov)
+
+``data.healthcare.gov`` is another bare-metastore DKAN at ``/api/1/``,
+but the QHP Landscape PUFs distribute as ZIP-bundled XLSX rather than
+direct CSV. ``get_dkan_dataset_zip_url`` resolves the ZIP downloadURL
+from the same metastore shape; the extraction-to-Parquet step lives in
+the Dagster asset because it requires a temp dir and DuckDB's excel
+extension, not anything in this client.
 """
 
 from __future__ import annotations
@@ -60,6 +69,7 @@ if TYPE_CHECKING:
 PROVIDER_DATA_BASE_URL = "https://data.cms.gov"
 MEDICAID_BASE_URL = "https://data.medicaid.gov"
 OPEN_PAYMENTS_BASE_URL = "https://openpaymentsdata.cms.gov"
+HEALTHCARE_GOV_DKAN_BASE_URL = "https://data.healthcare.gov"
 _METASTORE_PATH_TEMPLATE = "/provider-data/api/1/metastore/schemas/dataset/items/{dataset_id}"
 _DATASTORE_PATH_TEMPLATE = "/provider-data/api/1/datastore/query/{distribution_id}"
 _BARE_METASTORE_PATH_TEMPLATE = "/api/1/metastore/schemas/dataset/items/{dataset_id}"
@@ -301,3 +311,63 @@ def get_dkan_dataset_csv_url(dataset_id: str, *, base_url: str) -> str:
             return url
     msg = f"DKAN dataset {dataset_id!r} at {base_url!r} has no distribution with a downloadURL"
     raise KeyError(msg)
+
+
+def get_dkan_dataset_zip_url(dataset_id: str, *, base_url: str) -> str:
+    """Return the ZIP ``downloadURL`` for a bare-metastore DKAN dataset.
+
+    Used for ``data.healthcare.gov`` QHP Landscape PUFs, which package the
+    annual plan landscape spreadsheet as ZIP-bundled XLSX rather than the
+    direct CSV pattern used by Medicaid/Open Payments. The metastore shape
+    is identical; only the format filter differs, so we don't reuse
+    ``get_dkan_dataset_csv_url`` — that one returns the first distribution
+    indiscriminately and would happily hand back a non-ZIP if the dataset
+    grew a second distribution down the road.
+
+    Args:
+        dataset_id: Dataset UUID (e.g.
+            ``"6fe7fb77-7291-4104-952f-7c7e2c5d0c45"`` for QHP Landscape
+            PY2026 Individual Medical).
+        base_url: The DKAN host root, e.g. ``HEALTHCARE_GOV_DKAN_BASE_URL``.
+
+    Raises:
+        KeyError: No ZIP-format distribution carrying a ``downloadURL``
+            was found on the metastore record.
+        TypeError: The metastore payload is shaped unexpectedly.
+
+    """
+    path = _BARE_METASTORE_PATH_TEMPLATE.format(dataset_id=dataset_id)
+    with build_client(base_url=base_url) as client:
+        payload: JsonValue = request_json(client, "GET", path)
+    if not isinstance(payload, dict):
+        msg = f"expected DKAN metastore payload to be an object, got {type(payload).__name__}"
+        raise TypeError(msg)
+    distributions: JsonValue = payload.get("distribution", [])
+    if not isinstance(distributions, list):
+        msg = f"expected `distribution` to be a list, got {type(distributions).__name__}"
+        raise TypeError(msg)
+    for entry in distributions:
+        if not isinstance(entry, dict):
+            continue
+        if not _is_zip_distribution(entry):
+            continue
+        url: JsonValue = entry.get("downloadURL")
+        if isinstance(url, str) and url:
+            return url
+    msg = f"DKAN dataset {dataset_id!r} at {base_url!r} has no ZIP distribution with a downloadURL"
+    raise KeyError(msg)
+
+
+def _is_zip_distribution(entry: JsonObject) -> bool:
+    """Return True if ``entry`` looks like a ZIP-format DCAT distribution.
+
+    DKAN's metastore exposes both a ``format`` (`"zip"`) and a ``mediaType``
+    (`"application/zip"`); either is sufficient. We tolerate case differences
+    in either field — DKAN has shipped both lower-case and title-case
+    formats in the wild.
+    """
+    fmt: JsonValue = entry.get("format")
+    if isinstance(fmt, str) and fmt.lower() == "zip":
+        return True
+    media: JsonValue = entry.get("mediaType")
+    return isinstance(media, str) and "zip" in media.lower()

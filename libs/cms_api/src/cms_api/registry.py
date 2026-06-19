@@ -29,15 +29,16 @@ SourceLiteral = Literal[
     "dkan_data_api_bulk",
     "dkan_medicaid_bulk",
     "dkan_open_payments_bulk",
+    "dkan_healthcare_gov_zip",
 ]
 
 
 # Per-source required and forbidden fields. Required fields must be
 # truthy on the spec; forbidden fields must be left at their default
 # `None`. ``year`` is forbidden everywhere except ``dkan_data_api_bulk``,
-# where it's an optional year selector — Medicaid and Open Payments
-# bulk rows pick a year at the dataset-id level (each program year is
-# a separate UUID), so ``year`` stays forbidden there.
+# where it's an optional year selector — Medicaid, Open Payments, and
+# healthcare.gov QHP bulk rows pick a year at the dataset-id level
+# (each plan year is a separate UUID), so ``year`` stays forbidden there.
 _SOURCE_FIELD_RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "socrata": (("dataset_id",), ("path", "year")),
     "healthcare_gov": (("path",), ("dataset_id", "year")),
@@ -45,6 +46,7 @@ _SOURCE_FIELD_RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "dkan_data_api_bulk": (("dataset_id",), ("path",)),
     "dkan_medicaid_bulk": (("dataset_id",), ("path", "year")),
     "dkan_open_payments_bulk": (("dataset_id",), ("path", "year")),
+    "dkan_healthcare_gov_zip": (("dataset_id",), ("path", "year")),
 }
 
 
