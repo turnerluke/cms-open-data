@@ -12,8 +12,8 @@ sources:
       - name: cms_part_d_spending_by_drug
         description: |
           Medicare Part D Spending by Drug (CMS Socrata dataset
-          `mhdd-npjx`). Landed by the `cms_part_d_spending_by_drug`
-          Dagster asset; one Parquet file per asset run.
+          `mhdd-npjx`). Landed by the `cms_part_d_spending_by_drug` Dagster
+          asset; one Parquet file per asset run.
       - name: cms_healthcare_gov_glossary
         description: |
           Healthcare.gov glossary terms. Landed by the
@@ -24,10 +24,9 @@ sources:
           `cms_healthcare_gov_articles` Dagster asset.
       - name: cms_nppes_providers
         description: |
-          NPPES organizational providers (NPI-2), swept state-by-state
-          from the NPI Registry by the `cms_nppes_providers` Dagster
-          asset. Not exhaustive: NPPES caps any single query at 1,200
-          reachable rows.
+          NPPES organizational providers (NPI-2), swept state-by-state from
+          the NPI Registry by the `cms_nppes_providers` Dagster asset. Not
+          exhaustive: NPPES caps any single query at 1,200 reachable rows.
       - name: cms_hospital_general_information
         description: |
           Hospital General Information from Care Compare (DKAN dataset
@@ -36,18 +35,17 @@ sources:
       - name: cms_hospital_hcahps
         description: |
           Patient Survey HCAHPS — Hospital level (DKAN dataset
-          `dgck-syfz`). Landed by the `cms_hospital_hcahps` Dagster
-          asset.
+          `dgck-syfz`). Landed by the `cms_hospital_hcahps` Dagster asset.
       - name: cms_hospital_associated_infections
         description: |
-          Healthcare-Associated Infections — Hospital level (DKAN
-          dataset `77hc-ibv8`). Landed by the
-          `cms_hospital_associated_infections` Dagster asset.
+          Healthcare-Associated Infections — Hospital level (DKAN dataset
+          `77hc-ibv8`). Landed by the `cms_hospital_associated_infections`
+          Dagster asset.
       - name: cms_hospital_complications_deaths
         description: |
           Complications and Deaths — Hospital level (DKAN dataset
-          `ynj2-r877`). Landed by the
-          `cms_hospital_complications_deaths` Dagster asset.
+          `ynj2-r877`). Landed by the `cms_hospital_complications_deaths`
+          Dagster asset.
       - name: cms_hospital_unplanned_visits
         description: |
           Unplanned Hospital Visits — Hospital level (DKAN dataset
@@ -55,14 +53,14 @@ sources:
           Dagster asset.
       - name: cms_hospital_value_based_purchasing_total
         description: |
-          Hospital Value-Based Purchasing — Total Performance Score
-          (DKAN dataset `ypbt-wvdk`). Landed by the
+          Hospital Value-Based Purchasing — Total Performance Score (DKAN
+          dataset `ypbt-wvdk`). Landed by the
           `cms_hospital_value_based_purchasing_total` Dagster asset.
       - name: cms_hospital_readmissions_reduction
         description: |
           Hospital Readmissions Reduction Program (DKAN dataset
-          `9n3s-kdb3`). Landed by the
-          `cms_hospital_readmissions_reduction` Dagster asset.
+          `9n3s-kdb3`). Landed by the `cms_hospital_readmissions_reduction`
+          Dagster asset.
       - name: cms_home_health_care_agencies
         description: |
           Home Health Care Agencies from Care Compare (DKAN dataset
@@ -75,9 +73,8 @@ sources:
           Dagster asset.
       - name: cms_dialysis_facility_listing
         description: |
-          Dialysis Facility Listing by Facility (DKAN dataset
-          `23ew-n7w9`). Landed by the `cms_dialysis_facility_listing`
-          Dagster asset.
+          Dialysis Facility Listing by Facility (DKAN dataset `23ew-n7w9`).
+          Landed by the `cms_dialysis_facility_listing` Dagster asset.
       - name: cms_nursing_home_provider_info
         description: |
           Nursing Home Provider Information / Care Compare star ratings
@@ -85,8 +82,8 @@ sources:
           `cms_nursing_home_provider_info` Dagster asset.
       - name: cms_nursing_home_quality_measures_mds
         description: |
-          Nursing Home Quality Measures — MDS-based, facility level
-          (DKAN dataset `djen-97ju`). Landed by the
+          Nursing Home Quality Measures — MDS-based, facility level (DKAN
+          dataset `djen-97ju`). Landed by the
           `cms_nursing_home_quality_measures_mds` Dagster asset.
       - name: cms_nursing_home_quality_measures_claims
         description: |
@@ -100,42 +97,39 @@ sources:
           asset.
       - name: cms_nursing_home_penalties
         description: |
-          Nursing Home Penalties (DKAN dataset `g6vv-u9sr`). Landed by
-          the `cms_nursing_home_penalties` Dagster asset.
+          Nursing Home Penalties (DKAN dataset `g6vv-u9sr`). Landed by the
+          `cms_nursing_home_penalties` Dagster asset.
       - name: cms_nursing_home_ownership
         description: |
-          Nursing Home Ownership (DKAN dataset `y2hd-n93e`). Landed by
-          the `cms_nursing_home_ownership` Dagster asset.
+          Nursing Home Ownership (DKAN dataset `y2hd-n93e`). Landed by the
+          `cms_nursing_home_ownership` Dagster asset.
       - name: cms_doctors_and_clinicians_national_downloadable
         description: |
-          Doctors and Clinicians National Downloadable File (DKAN
-          dataset `mj5m-pzi6`). Landed by the
-          `cms_doctors_and_clinicians_national_downloadable` Dagster
-          asset.
+          Doctors and Clinicians National Downloadable File (DKAN dataset
+          `mj5m-pzi6`). Landed by the
+          `cms_doctors_and_clinicians_national_downloadable` Dagster asset.
       - name: cms_doctors_and_clinicians_facility_affiliations
         description: |
-          Doctors and Clinicians Facility Affiliation Data (DKAN
-          dataset `27ea-46a8`). Landed by the
-          `cms_doctors_and_clinicians_facility_affiliations` Dagster
-          asset.
+          Doctors and Clinicians Facility Affiliation Data (DKAN dataset
+          `27ea-46a8`). Landed by the
+          `cms_doctors_and_clinicians_facility_affiliations` Dagster asset.
       - name: cms_inpatient_rehabilitation_facility_general
         description: |
-          Inpatient Rehabilitation Facility — General Information
-          (DKAN dataset `7t8x-u3ir`). Landed by the
-          `cms_inpatient_rehabilitation_facility_general` Dagster
-          asset.
+          Inpatient Rehabilitation Facility — General Information (DKAN
+          dataset `7t8x-u3ir`). Landed by the
+          `cms_inpatient_rehabilitation_facility_general` Dagster asset.
       - name: cms_long_term_care_hospital_general
         description: |
           Long-Term Care Hospital — General Information (DKAN dataset
-          `azum-44iv`). Landed by the
-          `cms_long_term_care_hospital_general` Dagster asset.
+          `azum-44iv`). Landed by the `cms_long_term_care_hospital_general`
+          Dagster asset.
       - name: cms_medicare_physician_by_provider
         description: |
-          Medicare Physician & Other Practitioners — by Provider
-          (CMS data-api/v1 dataset
-          `8889d81e-2ee7-448f-8713-f071038289b5`). Landed via DuckDB
-          bulk-CSV by the `cms_medicare_physician_by_provider`
-          Dagster asset; ~1.1M rows per year.
+          Medicare Physician & Other Practitioners — by Provider (CMS
+          data-api/v1 dataset `8889d81e-2ee7-448f-8713-f071038289b5`).
+          Landed via DuckDB bulk-CSV by the
+          `cms_medicare_physician_by_provider` Dagster asset; ~1.1M rows
+          per year.
       - name: cms_medicare_physician_by_provider_and_service
         description: |
           Medicare Physician & Other Practitioners — by Provider and
@@ -159,19 +153,17 @@ sources:
       - name: cms_medicare_part_d_prescribers_by_provider_and_drug
         description: |
           Medicare Part D Prescribers — by Provider and Drug (CMS
-          data-api/v1 dataset
-          `9552739e-3d05-4c1b-8eff-ecabf391e2e5`). Landed via DuckDB
-          bulk-CSV by the
+          data-api/v1 dataset `9552739e-3d05-4c1b-8eff-ecabf391e2e5`).
+          Landed via DuckDB bulk-CSV by the
           `cms_medicare_part_d_prescribers_by_provider_and_drug` Dagster
           asset.
       - name: cms_medicare_part_d_prescribers_by_geography_and_drug
         description: |
           Medicare Part D Prescribers — by Geography and Drug (CMS
-          data-api/v1 dataset
-          `c8ea3f8e-3a09-4fea-86f2-8902fb4b0920`). Landed via DuckDB
-          bulk-CSV by the
-          `cms_medicare_part_d_prescribers_by_geography_and_drug`
-          Dagster asset.
+          data-api/v1 dataset `c8ea3f8e-3a09-4fea-86f2-8902fb4b0920`).
+          Landed via DuckDB bulk-CSV by the
+          `cms_medicare_part_d_prescribers_by_geography_and_drug` Dagster
+          asset.
       - name: cms_medicare_inpatient_hospitals_by_provider
         description: |
           Medicare Inpatient Hospitals — by Provider (CMS data-api/v1
@@ -181,9 +173,8 @@ sources:
       - name: cms_medicare_outpatient_hospitals_by_provider_and_service
         description: |
           Medicare Outpatient Hospitals — by Provider and Service (CMS
-          data-api/v1 dataset
-          `ccbc9a44-40d4-46b4-a709-5caa59212e50`). Landed via DuckDB
-          bulk-CSV by the
+          data-api/v1 dataset `ccbc9a44-40d4-46b4-a709-5caa59212e50`).
+          Landed via DuckDB bulk-CSV by the
           `cms_medicare_outpatient_hospitals_by_provider_and_service`
           Dagster asset. CMS does not publish a provider-only outpatient
           summary; this is the closest analog to
@@ -192,67 +183,63 @@ sources:
         description: |
           Medicare Part B Spending by Drug — annual (CMS data-api/v1
           dataset `76a714ad-3a2c-43ac-b76d-9dadf8f7d890`). Landed via
-          DuckDB bulk-CSV by the
-          `cms_medicare_part_b_spending_by_drug` Dagster asset.
+          DuckDB bulk-CSV by the `cms_medicare_part_b_spending_by_drug`
+          Dagster asset.
       - name: cms_medicaid_state_drug_utilization_2023
         description: |
-          Medicaid State Drug Utilization Data 2023 (data.medicaid.gov
-          DKAN dataset `d890d3a9-6b00-43fd-8b31-fcba4c8e2909`). Landed
-          via DuckDB bulk-CSV by the
-          `cms_medicaid_state_drug_utilization_2023` Dagster asset.
-          CMS partitions SDUD as one dataset UUID per calendar year;
-          this row tracks 2023 — additional years can be added as
-          separate registry rows.
+          Medicaid State Drug Utilization Data 2023 (data.medicaid.gov DKAN
+          dataset `d890d3a9-6b00-43fd-8b31-fcba4c8e2909`). Landed via
+          DuckDB bulk-CSV by the `cms_medicaid_state_drug_utilization_2023`
+          Dagster asset. CMS partitions SDUD as one dataset UUID per
+          calendar year; this row tracks 2023 — additional years can be
+          added as separate registry rows.
       - name: cms_open_payments_general_2024
         description: |
           Open Payments — General Payments, program year 2024
           (`openpaymentsdata.cms.gov` DKAN dataset
           `e6b17c6a-2534-4207-a4a1-6746a14911ff`). Industry-to-physician
           transfers under the Sunshine Act; ~12M rows. Landed via DuckDB
-          bulk-CSV by the `cms_open_payments_general_2024` Dagster
-          asset. CMS partitions Open Payments at the UUID level — one
-          dataset per program year.
+          bulk-CSV by the `cms_open_payments_general_2024` Dagster asset.
+          CMS partitions Open Payments at the UUID level — one dataset per
+          program year.
       - name: cms_open_payments_research_2024
         description: |
           Open Payments — Research Payments, program year 2024
           (`openpaymentsdata.cms.gov` DKAN dataset
           `2f15cb85-8887-4dcc-a318-1f8ec1d815b3`). Landed via DuckDB
-          bulk-CSV by the `cms_open_payments_research_2024` Dagster
-          asset.
+          bulk-CSV by the `cms_open_payments_research_2024` Dagster asset.
       - name: cms_open_payments_ownership_2024
         description: |
           Open Payments — Physician Ownership and Investment Interests,
           program year 2024 (`openpaymentsdata.cms.gov` DKAN dataset
           `9ac4f7f8-b6e4-4d80-8410-4aba7e71dd02`). Landed via DuckDB
-          bulk-CSV by the `cms_open_payments_ownership_2024` Dagster
-          asset.
+          bulk-CSV by the `cms_open_payments_ownership_2024` Dagster asset.
       - name: cms_qhp_landscape_individual_medical_2026
         description: |
-          QHP Landscape PY2026 Individual Medical (data.healthcare.gov
-          DKAN dataset `6fe7fb77-7291-4104-952f-7c7e2c5d0c45`).
-          Certified medical plans offered on the individual market by
-          county. Landed by the
-          `cms_qhp_landscape_individual_medical_2026` Dagster asset:
-          ZIP-bundled XLSX, extracted and streamed to Parquet via
-          DuckDB's `read_xlsx`. CMS partitions QHP Landscape at the
-          UUID level — one dataset per plan year.
+          QHP Landscape PY2026 Individual Medical (data.healthcare.gov DKAN
+          dataset `6fe7fb77-7291-4104-952f-7c7e2c5d0c45`). Certified
+          medical plans offered on the individual market by county. Landed
+          by the `cms_qhp_landscape_individual_medical_2026` Dagster asset:
+          ZIP-bundled XLSX, extracted and streamed to Parquet via DuckDB's
+          `read_xlsx`. CMS partitions QHP Landscape at the UUID level — one
+          dataset per plan year.
       - name: cms_qhp_landscape_individual_dental_2026
         description: |
-          QHP Landscape PY2026 Individual Dental (data.healthcare.gov
-          DKAN dataset `0c494938-ccdb-412a-be89-9cb69fd82e28`).
-          Certified stand-alone dental plans on the individual market
-          by county. Landed by the
-          `cms_qhp_landscape_individual_dental_2026` Dagster asset.
+          QHP Landscape PY2026 Individual Dental (data.healthcare.gov DKAN
+          dataset `0c494938-ccdb-412a-be89-9cb69fd82e28`). Certified
+          stand-alone dental plans on the individual market by county.
+          Landed by the `cms_qhp_landscape_individual_dental_2026` Dagster
+          asset.
       - name: cms_qhp_landscape_shop_medical_2026
         description: |
           QHP Landscape PY2026 Medical SHOP (data.healthcare.gov DKAN
           dataset `d1241e9c-2a73-435c-afb0-f231645b63c8`). Certified
-          medical plans on the Small Business Health Options Program
-          market by county. Landed by the
-          `cms_qhp_landscape_shop_medical_2026` Dagster asset.
+          medical plans on the Small Business Health Options Program market
+          by county. Landed by the `cms_qhp_landscape_shop_medical_2026`
+          Dagster asset.
       - name: cms_qhp_landscape_shop_dental_2026
         description: |
           QHP Landscape PY2026 Dental SHOP (data.healthcare.gov DKAN
           dataset `1e4852dd-a489-4ef0-ab71-b424bfca516e`). Certified
-          stand-alone dental plans on the SHOP market by county. Landed
-          by the `cms_qhp_landscape_shop_dental_2026` Dagster asset.
+          stand-alone dental plans on the SHOP market by county. Landed by
+          the `cms_qhp_landscape_shop_dental_2026` Dagster asset.

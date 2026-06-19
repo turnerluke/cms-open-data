@@ -96,6 +96,17 @@ bash scripts/local-ci/run-subproject-tests.sh
 Hook config is cached at session start, so edits to
 `.claude/settings.json` only take effect in a new Claude Code session.
 
+## Registry-driven dbt sources
+
+Adding a CMS dataset is **one** `[[dataset]]` row in
+`libs/cms_api/datasets.toml`. The dbt sources file at
+`dbt/cms_analytics/models/staging/cms/_cms__sources.yml` is regenerated
+from that registry by `scripts/gen_cms_sources.py` — a pre-commit hook
+runs it on every commit, and `tests/test_dbt_sources_in_sync.py`
+fails CI if the YAML drifts. Don't hand-edit the sources YAML; edit
+the TOML row's `description` and let the hook (or
+`uv run python scripts/gen_cms_sources.py --write`) regenerate.
+
 ## Ralph loops
 
 - `scripts/ralph/` contains tooling for running autonomous Ralph Wiggum

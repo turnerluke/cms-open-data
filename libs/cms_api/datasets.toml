@@ -4,6 +4,13 @@
 # `dagster/cms_pipelines/src/cms_pipelines/defs/cms/registry_assets.py`
 # emits one `@asset` named `cms_<key>` per row here.
 #
+# `description` is also the source of truth for the dbt sources file at
+# `dbt/cms_analytics/models/staging/cms/_cms__sources.yml` — that file is
+# regenerated from this registry by `scripts/gen_cms_sources.py` (run on
+# every commit by pre-commit, and verified by `tests/test_dbt_sources_in_sync.py`).
+# Write descriptions as the prose you want to see in dbt; the generator
+# wraps them at ~70 cols when emitting YAML.
+#
 # Required fields: key, source, description, group.
 # Source-specific required fields:
 #   - socrata: dataset_id (Socrata 4x4)
@@ -16,21 +23,21 @@
 key = "part_d_spending_by_drug"
 source = "socrata"
 dataset_id = "mhdd-npjx"
-description = "Medicare Part D Spending by Drug (CMS Socrata mhdd-npjx)."
+description = "Medicare Part D Spending by Drug (CMS Socrata dataset `mhdd-npjx`). Landed by the `cms_part_d_spending_by_drug` Dagster asset; one Parquet file per asset run."
 group = "cms_raw"
 
 [[dataset]]
 key = "healthcare_gov_glossary"
 source = "healthcare_gov"
 path = "/api/glossary.json"
-description = "Healthcare.gov consumer glossary."
+description = "Healthcare.gov glossary terms. Landed by the `cms_healthcare_gov_glossary` Dagster asset."
 group = "cms_raw"
 
 [[dataset]]
 key = "healthcare_gov_articles"
 source = "healthcare_gov"
 path = "/api/articles.json"
-description = "Healthcare.gov consumer articles."
+description = "Healthcare.gov articles. Landed by the `cms_healthcare_gov_articles` Dagster asset."
 group = "cms_raw"
 
 # --- Provider Data Catalog (Care Compare) -----------------------------------
@@ -41,140 +48,140 @@ group = "cms_raw"
 key = "hospital_general_information"
 source = "dkan_provider_data"
 dataset_id = "xubh-q36u"
-description = "Hospital General Information from Care Compare."
+description = "Hospital General Information from Care Compare (DKAN dataset `xubh-q36u`). Landed by the `cms_hospital_general_information` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "hospital_hcahps"
 source = "dkan_provider_data"
 dataset_id = "dgck-syfz"
-description = "Patient Survey HCAHPS — Hospital level."
+description = "Patient Survey HCAHPS — Hospital level (DKAN dataset `dgck-syfz`). Landed by the `cms_hospital_hcahps` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "hospital_associated_infections"
 source = "dkan_provider_data"
 dataset_id = "77hc-ibv8"
-description = "Healthcare-Associated Infections — Hospital level."
+description = "Healthcare-Associated Infections — Hospital level (DKAN dataset `77hc-ibv8`). Landed by the `cms_hospital_associated_infections` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "hospital_complications_deaths"
 source = "dkan_provider_data"
 dataset_id = "ynj2-r877"
-description = "Complications and Deaths — Hospital level."
+description = "Complications and Deaths — Hospital level (DKAN dataset `ynj2-r877`). Landed by the `cms_hospital_complications_deaths` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "hospital_unplanned_visits"
 source = "dkan_provider_data"
 dataset_id = "632h-zaca"
-description = "Unplanned Hospital Visits — Hospital level."
+description = "Unplanned Hospital Visits — Hospital level (DKAN dataset `632h-zaca`). Landed by the `cms_hospital_unplanned_visits` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "hospital_value_based_purchasing_total"
 source = "dkan_provider_data"
 dataset_id = "ypbt-wvdk"
-description = "Hospital Value-Based Purchasing — Total Performance Score."
+description = "Hospital Value-Based Purchasing — Total Performance Score (DKAN dataset `ypbt-wvdk`). Landed by the `cms_hospital_value_based_purchasing_total` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "hospital_readmissions_reduction"
 source = "dkan_provider_data"
 dataset_id = "9n3s-kdb3"
-description = "Hospital Readmissions Reduction Program."
+description = "Hospital Readmissions Reduction Program (DKAN dataset `9n3s-kdb3`). Landed by the `cms_hospital_readmissions_reduction` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "home_health_care_agencies"
 source = "dkan_provider_data"
 dataset_id = "6jpm-sxkc"
-description = "Home Health Care Agencies (Care Compare)."
+description = "Home Health Care Agencies from Care Compare (DKAN dataset `6jpm-sxkc`). Landed by the `cms_home_health_care_agencies` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "hospice_general_information"
 source = "dkan_provider_data"
 dataset_id = "yc9t-dgbk"
-description = "Hospice General Information (Care Compare)."
+description = "Hospice General Information from Care Compare (DKAN dataset `yc9t-dgbk`). Landed by the `cms_hospice_general_information` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "dialysis_facility_listing"
 source = "dkan_provider_data"
 dataset_id = "23ew-n7w9"
-description = "Dialysis Facility Listing by Facility."
+description = "Dialysis Facility Listing by Facility (DKAN dataset `23ew-n7w9`). Landed by the `cms_dialysis_facility_listing` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "nursing_home_provider_info"
 source = "dkan_provider_data"
 dataset_id = "4pq5-n9py"
-description = "Nursing Home Provider Information (Care Compare star ratings)."
+description = "Nursing Home Provider Information / Care Compare star ratings (DKAN dataset `4pq5-n9py`). Landed by the `cms_nursing_home_provider_info` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "nursing_home_quality_measures_mds"
 source = "dkan_provider_data"
 dataset_id = "djen-97ju"
-description = "Nursing Home Quality Measures — MDS-based, facility level."
+description = "Nursing Home Quality Measures — MDS-based, facility level (DKAN dataset `djen-97ju`). Landed by the `cms_nursing_home_quality_measures_mds` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "nursing_home_quality_measures_claims"
 source = "dkan_provider_data"
 dataset_id = "ijh5-nb2v"
-description = "Nursing Home Quality Measures — Medicare claims-based."
+description = "Nursing Home Quality Measures — Medicare claims-based (DKAN dataset `ijh5-nb2v`). Landed by the `cms_nursing_home_quality_measures_claims` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "nursing_home_health_deficiencies"
 source = "dkan_provider_data"
 dataset_id = "r5ix-sfxw"
-description = "Nursing Home Health Deficiencies."
+description = "Nursing Home Health Deficiencies (DKAN dataset `r5ix-sfxw`). Landed by the `cms_nursing_home_health_deficiencies` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "nursing_home_penalties"
 source = "dkan_provider_data"
 dataset_id = "g6vv-u9sr"
-description = "Nursing Home Penalties."
+description = "Nursing Home Penalties (DKAN dataset `g6vv-u9sr`). Landed by the `cms_nursing_home_penalties` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "nursing_home_ownership"
 source = "dkan_provider_data"
 dataset_id = "y2hd-n93e"
-description = "Nursing Home Ownership."
+description = "Nursing Home Ownership (DKAN dataset `y2hd-n93e`). Landed by the `cms_nursing_home_ownership` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "doctors_and_clinicians_national_downloadable"
 source = "dkan_provider_data"
 dataset_id = "mj5m-pzi6"
-description = "Doctors and Clinicians National Downloadable File."
+description = "Doctors and Clinicians National Downloadable File (DKAN dataset `mj5m-pzi6`). Landed by the `cms_doctors_and_clinicians_national_downloadable` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "doctors_and_clinicians_facility_affiliations"
 source = "dkan_provider_data"
 dataset_id = "27ea-46a8"
-description = "Doctors and Clinicians Facility Affiliation Data."
+description = "Doctors and Clinicians Facility Affiliation Data (DKAN dataset `27ea-46a8`). Landed by the `cms_doctors_and_clinicians_facility_affiliations` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "inpatient_rehabilitation_facility_general"
 source = "dkan_provider_data"
 dataset_id = "7t8x-u3ir"
-description = "Inpatient Rehabilitation Facility — General Information."
+description = "Inpatient Rehabilitation Facility — General Information (DKAN dataset `7t8x-u3ir`). Landed by the `cms_inpatient_rehabilitation_facility_general` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "long_term_care_hospital_general"
 source = "dkan_provider_data"
 dataset_id = "azum-44iv"
-description = "Long-Term Care Hospital — General Information."
+description = "Long-Term Care Hospital — General Information (DKAN dataset `azum-44iv`). Landed by the `cms_long_term_care_hospital_general` Dagster asset."
 group = "cms_raw_provider_compare"
 
 # --- Provider Summary by Type of Service -------------------------------------
@@ -189,56 +196,56 @@ group = "cms_raw_provider_compare"
 key = "medicare_physician_by_provider"
 source = "dkan_data_api_bulk"
 dataset_id = "8889d81e-2ee7-448f-8713-f071038289b5"
-description = "Medicare Physician & Other Practitioners — by Provider."
+description = "Medicare Physician & Other Practitioners — by Provider (CMS data-api/v1 dataset `8889d81e-2ee7-448f-8713-f071038289b5`). Landed via DuckDB bulk-CSV by the `cms_medicare_physician_by_provider` Dagster asset; ~1.1M rows per year."
 group = "cms_raw_provider_summary"
 
 [[dataset]]
 key = "medicare_physician_by_provider_and_service"
 source = "dkan_data_api_bulk"
 dataset_id = "92396110-2aed-4d63-a6a2-5d6207d46a29"
-description = "Medicare Physician & Other Practitioners — by Provider and Service."
+description = "Medicare Physician & Other Practitioners — by Provider and Service (CMS data-api/v1 dataset `92396110-2aed-4d63-a6a2-5d6207d46a29`). Landed via DuckDB bulk-CSV by the `cms_medicare_physician_by_provider_and_service` Dagster asset; ~10M rows per year."
 group = "cms_raw_provider_summary"
 
 [[dataset]]
 key = "medicare_physician_by_geography_and_service"
 source = "dkan_data_api_bulk"
 dataset_id = "6fea9d79-0129-4e4c-b1b8-23cd86a4f435"
-description = "Medicare Physician & Other Practitioners — by Geography and Service."
+description = "Medicare Physician & Other Practitioners — by Geography and Service (CMS data-api/v1 dataset `6fea9d79-0129-4e4c-b1b8-23cd86a4f435`). Landed via DuckDB bulk-CSV by the `cms_medicare_physician_by_geography_and_service` Dagster asset."
 group = "cms_raw_provider_summary"
 
 [[dataset]]
 key = "medicare_part_d_prescribers_by_provider"
 source = "dkan_data_api_bulk"
 dataset_id = "14d8e8a9-7e9b-4370-a044-bf97c46b4b44"
-description = "Medicare Part D Prescribers — by Provider."
+description = "Medicare Part D Prescribers — by Provider (CMS data-api/v1 dataset `14d8e8a9-7e9b-4370-a044-bf97c46b4b44`). Landed via DuckDB bulk-CSV by the `cms_medicare_part_d_prescribers_by_provider` Dagster asset."
 group = "cms_raw_provider_summary"
 
 [[dataset]]
 key = "medicare_part_d_prescribers_by_provider_and_drug"
 source = "dkan_data_api_bulk"
 dataset_id = "9552739e-3d05-4c1b-8eff-ecabf391e2e5"
-description = "Medicare Part D Prescribers — by Provider and Drug."
+description = "Medicare Part D Prescribers — by Provider and Drug (CMS data-api/v1 dataset `9552739e-3d05-4c1b-8eff-ecabf391e2e5`). Landed via DuckDB bulk-CSV by the `cms_medicare_part_d_prescribers_by_provider_and_drug` Dagster asset."
 group = "cms_raw_provider_summary"
 
 [[dataset]]
 key = "medicare_part_d_prescribers_by_geography_and_drug"
 source = "dkan_data_api_bulk"
 dataset_id = "c8ea3f8e-3a09-4fea-86f2-8902fb4b0920"
-description = "Medicare Part D Prescribers — by Geography and Drug."
+description = "Medicare Part D Prescribers — by Geography and Drug (CMS data-api/v1 dataset `c8ea3f8e-3a09-4fea-86f2-8902fb4b0920`). Landed via DuckDB bulk-CSV by the `cms_medicare_part_d_prescribers_by_geography_and_drug` Dagster asset."
 group = "cms_raw_provider_summary"
 
 [[dataset]]
 key = "medicare_inpatient_hospitals_by_provider"
 source = "dkan_data_api_bulk"
 dataset_id = "ee6fb1a5-39b9-46b3-a980-a7284551a732"
-description = "Medicare Inpatient Hospitals — by Provider."
+description = "Medicare Inpatient Hospitals — by Provider (CMS data-api/v1 dataset `ee6fb1a5-39b9-46b3-a980-a7284551a732`). Landed via DuckDB bulk-CSV by the `cms_medicare_inpatient_hospitals_by_provider` Dagster asset."
 group = "cms_raw_provider_summary"
 
 [[dataset]]
 key = "medicare_outpatient_hospitals_by_provider_and_service"
 source = "dkan_data_api_bulk"
 dataset_id = "ccbc9a44-40d4-46b4-a709-5caa59212e50"
-description = "Medicare Outpatient Hospitals — by Provider and Service (CMS does not publish a provider-only outpatient summary; this is the closest analog to the inpatient by-provider dataset)."
+description = "Medicare Outpatient Hospitals — by Provider and Service (CMS data-api/v1 dataset `ccbc9a44-40d4-46b4-a709-5caa59212e50`). Landed via DuckDB bulk-CSV by the `cms_medicare_outpatient_hospitals_by_provider_and_service` Dagster asset. CMS does not publish a provider-only outpatient summary; this is the closest analog to `cms_medicare_inpatient_hospitals_by_provider`."
 group = "cms_raw_provider_summary"
 
 # --- Drug spending & utilization ---------------------------------------------
@@ -254,14 +261,14 @@ group = "cms_raw_provider_summary"
 key = "medicare_part_b_spending_by_drug"
 source = "dkan_data_api_bulk"
 dataset_id = "76a714ad-3a2c-43ac-b76d-9dadf8f7d890"
-description = "Medicare Part B Spending by Drug (annual)."
+description = "Medicare Part B Spending by Drug — annual (CMS data-api/v1 dataset `76a714ad-3a2c-43ac-b76d-9dadf8f7d890`). Landed via DuckDB bulk-CSV by the `cms_medicare_part_b_spending_by_drug` Dagster asset."
 group = "cms_raw_drug_spending"
 
 [[dataset]]
 key = "medicaid_state_drug_utilization_2023"
 source = "dkan_medicaid_bulk"
 dataset_id = "d890d3a9-6b00-43fd-8b31-fcba4c8e2909"
-description = "Medicaid State Drug Utilization Data 2023 (data.medicaid.gov DKAN; one UUID per year)."
+description = "Medicaid State Drug Utilization Data 2023 (data.medicaid.gov DKAN dataset `d890d3a9-6b00-43fd-8b31-fcba4c8e2909`). Landed via DuckDB bulk-CSV by the `cms_medicaid_state_drug_utilization_2023` Dagster asset. CMS partitions SDUD as one dataset UUID per calendar year; this row tracks 2023 — additional years can be added as separate registry rows."
 group = "cms_raw_drug_spending"
 
 # --- Open Payments (Sunshine Act) --------------------------------------------
@@ -278,21 +285,21 @@ group = "cms_raw_drug_spending"
 key = "open_payments_general_2024"
 source = "dkan_open_payments_bulk"
 dataset_id = "e6b17c6a-2534-4207-a4a1-6746a14911ff"
-description = "Open Payments — General Payments, program year 2024 (industry-to-physician transfers; ~12M rows)."
+description = "Open Payments — General Payments, program year 2024 (`openpaymentsdata.cms.gov` DKAN dataset `e6b17c6a-2534-4207-a4a1-6746a14911ff`). Industry-to-physician transfers under the Sunshine Act; ~12M rows. Landed via DuckDB bulk-CSV by the `cms_open_payments_general_2024` Dagster asset. CMS partitions Open Payments at the UUID level — one dataset per program year."
 group = "cms_raw_open_payments"
 
 [[dataset]]
 key = "open_payments_research_2024"
 source = "dkan_open_payments_bulk"
 dataset_id = "2f15cb85-8887-4dcc-a318-1f8ec1d815b3"
-description = "Open Payments — Research Payments, program year 2024."
+description = "Open Payments — Research Payments, program year 2024 (`openpaymentsdata.cms.gov` DKAN dataset `2f15cb85-8887-4dcc-a318-1f8ec1d815b3`). Landed via DuckDB bulk-CSV by the `cms_open_payments_research_2024` Dagster asset."
 group = "cms_raw_open_payments"
 
 [[dataset]]
 key = "open_payments_ownership_2024"
 source = "dkan_open_payments_bulk"
 dataset_id = "9ac4f7f8-b6e4-4d80-8410-4aba7e71dd02"
-description = "Open Payments — Physician Ownership and Investment Interests, program year 2024."
+description = "Open Payments — Physician Ownership and Investment Interests, program year 2024 (`openpaymentsdata.cms.gov` DKAN dataset `9ac4f7f8-b6e4-4d80-8410-4aba7e71dd02`). Landed via DuckDB bulk-CSV by the `cms_open_payments_ownership_2024` Dagster asset."
 group = "cms_raw_open_payments"
 
 # --- Marketplace QHP Landscape PUFs ------------------------------------------
@@ -311,26 +318,26 @@ group = "cms_raw_open_payments"
 key = "qhp_landscape_individual_medical_2026"
 source = "dkan_healthcare_gov_zip"
 dataset_id = "6fe7fb77-7291-4104-952f-7c7e2c5d0c45"
-description = "QHP Landscape PY2026 Individual Medical (certified medical plans on the individual market by county)."
+description = "QHP Landscape PY2026 Individual Medical (data.healthcare.gov DKAN dataset `6fe7fb77-7291-4104-952f-7c7e2c5d0c45`). Certified medical plans offered on the individual market by county. Landed by the `cms_qhp_landscape_individual_medical_2026` Dagster asset: ZIP-bundled XLSX, extracted and streamed to Parquet via DuckDB's `read_xlsx`. CMS partitions QHP Landscape at the UUID level — one dataset per plan year."
 group = "cms_raw_marketplace"
 
 [[dataset]]
 key = "qhp_landscape_individual_dental_2026"
 source = "dkan_healthcare_gov_zip"
 dataset_id = "0c494938-ccdb-412a-be89-9cb69fd82e28"
-description = "QHP Landscape PY2026 Individual Dental (certified stand-alone dental plans on the individual market by county)."
+description = "QHP Landscape PY2026 Individual Dental (data.healthcare.gov DKAN dataset `0c494938-ccdb-412a-be89-9cb69fd82e28`). Certified stand-alone dental plans on the individual market by county. Landed by the `cms_qhp_landscape_individual_dental_2026` Dagster asset."
 group = "cms_raw_marketplace"
 
 [[dataset]]
 key = "qhp_landscape_shop_medical_2026"
 source = "dkan_healthcare_gov_zip"
 dataset_id = "d1241e9c-2a73-435c-afb0-f231645b63c8"
-description = "QHP Landscape PY2026 Medical SHOP (certified medical plans on the Small Business Health Options Program market by county)."
+description = "QHP Landscape PY2026 Medical SHOP (data.healthcare.gov DKAN dataset `d1241e9c-2a73-435c-afb0-f231645b63c8`). Certified medical plans on the Small Business Health Options Program market by county. Landed by the `cms_qhp_landscape_shop_medical_2026` Dagster asset."
 group = "cms_raw_marketplace"
 
 [[dataset]]
 key = "qhp_landscape_shop_dental_2026"
 source = "dkan_healthcare_gov_zip"
 dataset_id = "1e4852dd-a489-4ef0-ab71-b424bfca516e"
-description = "QHP Landscape PY2026 Dental SHOP (certified stand-alone dental plans on the SHOP market by county)."
+description = "QHP Landscape PY2026 Dental SHOP (data.healthcare.gov DKAN dataset `1e4852dd-a489-4ef0-ab71-b424bfca516e`). Certified stand-alone dental plans on the SHOP market by county. Landed by the `cms_qhp_landscape_shop_dental_2026` Dagster asset."
 group = "cms_raw_marketplace"
