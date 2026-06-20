@@ -87,8 +87,10 @@ testing = ["pytest*", "tests*"]
 "**/tests/**.py" = ["INP001", "S101", "ARG", "FBT", "PLR2004", "S105", "S106", "SLF001"]
 # pytest configuration files
 "**/conftest.py" = ["INP001"]
-# Script file relaxed standards
-"**/scripts/**/*.py" = ["T201", "EXE001"]
+# Script file relaxed standards. INP001 is silenced because `scripts/` is
+# a flat directory of run-once tools — making it a namespace package would
+# imply the files are importable, which they aren't.
+"**/scripts/**/*.py" = ["INP001", "T201", "EXE001"]
 
 [lint.flake8-tidy-imports.banned-api]
 # `typing.Any` is banned — see docs/policies/no-any.md. ANN401 catches `Any`

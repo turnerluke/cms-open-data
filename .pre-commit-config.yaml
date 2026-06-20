@@ -89,6 +89,22 @@ repos:
       - id: ruff
 
   # ============================================================================================================================
+  # Registry-driven dbt sources
+  # ============================================================================================================================
+  # When `libs/cms_api/datasets.toml` changes, regenerate the dbt sources YAML
+  # so the two stay in sync without anyone having to remember. The pytest
+  # backstop at `tests/test_dbt_sources_in_sync.py` catches drift if the hook
+  # is skipped (`--no-verify`).
+  - repo: local
+    hooks:
+      - id: gen-cms-sources
+        name: regenerate dbt sources from registry
+        language: system
+        entry: uv run python scripts/gen_cms_sources.py --write
+        files: ^(libs/cms_api/datasets\.toml|scripts/gen_cms_sources\.py)$
+        pass_filenames: false
+
+  # ============================================================================================================================
   # SQL (dbt models)
   # ============================================================================================================================
   # Lints via the dbt subproject's uv venv so sqlfluff sees the same dbt-core +
