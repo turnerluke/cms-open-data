@@ -53,6 +53,15 @@ def _registry_asset(spec: DatasetSpec) -> AssetsDefinition:
     return getattr(registry_assets, f"cms_{spec.key}")
 
 
+_SOCRATA_FIXTURE_SPEC = DatasetSpec(
+    key="socrata_fixture",
+    source="socrata",
+    dataset_id="abcd-1234",
+    description="In-process Socrata fixture used to cover the socrata fetcher branch in tests.",
+    group="cms_raw",
+)
+
+
 _NON_REGISTRY_ASSET_SOURCES = {
     "dkan_data_api_bulk",
     "dkan_medicaid_bulk",
@@ -82,7 +91,13 @@ def test_socrata_registry_asset_materializes(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """A Socrata-sourced registry asset lands rows from `iter_dataset` as Parquet."""
+    """A Socrata-sourced registry asset lands rows from `iter_dataset` as Parquet.
+
+    The registry no longer carries any live Socrata rows (the last one,
+    Part D Spending by Drug, migrated to DKAN after CMS retired its Socrata
+    endpoint), so the socrata fetcher branch is exercised via an in-process
+    fixture spec rather than `load_registry()`.
+    """
     sample: list[JsonObject] = [
         {"brnd_name": "DrugA", "gnrc_name": "drug-a"},
         {"brnd_name": "DrugB", "gnrc_name": "drug-b"},
@@ -94,15 +109,12 @@ def test_socrata_registry_asset_materializes(
 
     monkeypatch.setattr(registry_assets, "iter_dataset", fake_iter_dataset)
 
-    socrata_specs = [s for s in load_registry() if s.source == "socrata"]
-    assert socrata_specs, "expected at least one socrata-sourced registry row"
-    spec = socrata_specs[0]
-    asset_def = _registry_asset(spec)
+    asset_def = registry_assets._build_asset(_SOCRATA_FIXTURE_SPEC)
 
     result = _materialize(asset_def, tmp_path)
 
     assert result.success
-    table = pq.read_table(_only_parquet(tmp_path, f"cms_{spec.key}"))
+    table = pq.read_table(_only_parquet(tmp_path, f"cms_{_SOCRATA_FIXTURE_SPEC.key}"))
     assert table.num_rows == 2
     assert "brnd_name" in table.column_names
 
@@ -177,8 +189,7 @@ def test_registry_asset_fails_on_empty_socrata_extract(
 
     monkeypatch.setattr(registry_assets, "iter_dataset", empty_iter)
 
-    spec = next(s for s in load_registry() if s.source == "socrata")
-    asset_def = _registry_asset(spec)
+    asset_def = registry_assets._build_asset(_SOCRATA_FIXTURE_SPEC)
 
     with pytest.raises(Exception, match="zero rows"):
         _materialize(asset_def, tmp_path)
