@@ -14,7 +14,7 @@ Repository = "https://github.com/turnerluke/cms-open-data"
 Issues = "https://github.com/turnerluke/cms-open-data/issues"
 
 [dependency-groups]
-dev = ["interrogate>=1.7.0", "pre-commit>=4.6.0", "pytest>=9.1.1", "pytest-cov>=6.0.0", "ruff>=0.15.17"]
+dev = ["interrogate>=1.7.0", "pre-commit>=4.6.0", "pytest>=9.1.1", "pytest-cov>=6.0.0", "ruff>=0.15.18"]
 
 [tool.uv.workspace]
 members = ["libs/cms_api", "dagster/cms_pipelines", "dbt/cms_analytics"]
