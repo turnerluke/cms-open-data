@@ -14,8 +14,13 @@ from dagster import Definitions, definitions
 
 # Path layout: this file lives at
 #   <repo>/dagster/cms_pipelines/src/cms_pipelines/defs/resources.py
-# The repository root is therefore four parents up.
-_REPO_ROOT = Path(__file__).resolve().parents[4]
+# Walk six directories up to reach <repo>: defs -> cms_pipelines (inner)
+# -> src -> cms_pipelines (outer) -> dagster -> <repo>. In 0-indexed
+# ``parents[]`` terms that's ``parents[5]`` (``parents[0]`` is the
+# immediate parent directory). dbt's ``external_location`` resolves
+# ``data/raw/`` against <repo>; landing Parquet anywhere else means dbt
+# can't read it.
+_REPO_ROOT = Path(__file__).resolve().parents[5]
 _DEFAULT_RAW_ROOT = _REPO_ROOT / "data" / "raw"
 
 CMS_RAW_ROOT_ENV = "CMS_RAW_ROOT"
