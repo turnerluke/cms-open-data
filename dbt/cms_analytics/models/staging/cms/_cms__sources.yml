@@ -11,9 +11,11 @@ sources:
     tables:
       - name: cms_part_d_spending_by_drug
         description: |
-          Medicare Part D Spending by Drug (CMS Socrata dataset
-          `mhdd-npjx`). Landed by the `cms_part_d_spending_by_drug` Dagster
-          asset; one Parquet file per asset run.
+          Medicare Part D Spending by Drug — annual (CMS data-api/v1
+          dataset `7e0b4365-fd63-4a29-8f5e-e0ac9f66a81b`). Landed via
+          DuckDB bulk-CSV by the `cms_part_d_spending_by_drug` Dagster
+          asset. Previously sourced from the retired Socrata dataset
+          `mhdd-npjx` (410 Gone after CMS migrated off Socrata).
       - name: cms_healthcare_gov_glossary
         description: |
           Healthcare.gov glossary terms. Landed by the
