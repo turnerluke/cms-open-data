@@ -1,5 +1,7 @@
 """Tests for the shared resource registration."""
 
+from pathlib import Path
+
 from cms_pipelines.defs.resources import CMS_RAW_ROOT_ENV, resolve_raw_root, shared_resources
 
 from dagster import Definitions
@@ -15,12 +17,21 @@ def test_resolve_raw_root_uses_env_var_when_set(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_resolve_raw_root_falls_back_to_repo_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Without the env var, the default points at the repo's `data/raw/` directory."""
+    """Without the env var, the default points at ``<repo>/data/raw``.
+
+    A weaker ``endswith('data/raw')`` check would accept ``<repo>/dagster/
+    data/raw`` too — exactly the off-by-one regression this test now
+    guards against. dbt's ``external_location`` resolves ``data/raw/``
+    against the actual repo root, so the IO manager must write there.
+    """
     monkeypatch.delenv(CMS_RAW_ROOT_ENV, raising=False)
 
-    resolved = resolve_raw_root()
+    # This test file is at <repo>/dagster/cms_pipelines/tests/test_resources.py,
+    # so <repo> is three directories up.
+    expected_repo_root = Path(__file__).resolve().parents[3]
+    expected = expected_repo_root / "data" / "raw"
 
-    assert resolved.endswith("data/raw")
+    assert Path(resolve_raw_root()) == expected
 
 
 def test_shared_resources_registers_parquet_io_manager() -> None:
