@@ -1,22 +1,74 @@
 version: 2
 
 models:
-  - name: stg_cms__example
+  - name: stg_cms__hospital_general_information
     description: |
-      Placeholder staging model so `dbt parse` has at least one node to
-      compile. Demonstrates the three test families this project uses:
-      dbt built-in generics, `dbt_utils`, and `dbt_expectations`. Delete
-      once real staging models exist.
+      One row per Medicare-certified hospital from CMS Care Compare's
+      Hospital General Information dataset (DKAN `xubh-q36u`). Renames
+      a few raw columns (`citytown` → `city`, `countyparish` → `county`,
+      `zip_code` → `zip5`), casts measure-count columns to `int` with
+      `try_cast` so the source's `'Not Available'` sentinel becomes
+      `NULL`, and maps the `'Yes'`/`'No'` and `'Y'`/`''` flag columns
+      to proper booleans. Grain: `facility_id` (CMS Certification
+      Number, CCN).
     columns:
-      - name: id
-        description: "Synthetic primary key for the placeholder row."
+      - name: facility_id
+        description: |
+          CMS Certification Number (CCN). Primary key — one row per
+          hospital.
         data_tests:
           - not_null
           - unique
+      - name: facility_name
+        description: "Hospital name (trimmed)."
+      - name: city
+        description: "City of the hospital address (raw `citytown`, trimmed)."
+      - name: county
+        description: "County or parish of the hospital address (raw `countyparish`, trimmed)."
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros (raw `zip_code`).
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{5}$'
+      - name: emergency_services
+        description: |
+          Whether the hospital offers emergency services. Raw `'Yes'`
+          / `'No'` mapped to boolean; other values become `NULL`.
+      - name: meets_birthing_friendly_criteria
+        description: |
+          Whether the hospital meets CMS's Birthing-Friendly designation
+          criteria. Raw column uses `'Y'` to flag designated hospitals
+          and an empty string otherwise; non-`'Y'` values become `NULL`
+          here because the source doesn't distinguish "not designated"
+          from "not evaluated".
+      - name: hospital_overall_rating
+        description: |
+          CMS overall hospital quality rating, 1–5 stars. `'Not
+          Available'` in the raw column becomes `NULL` here.
+        data_tests:
           - dbt_utils.accepted_range:
               arguments:
                 min_value: 1
-                max_value: 1
-          - dbt_expectations.expect_column_values_to_be_of_type:
-              arguments:
-                column_type: integer
+                max_value: 5
+                inclusive: true
+      - name: mort_group_measure_count
+        description: |
+          Total mortality measures CMS evaluated for the group (8 when
+          present). `try_cast` to `int`; `'Not Available'` becomes
+          `NULL`.
+      - name: count_of_facility_mort_measures
+        description: |
+          Mortality measures CMS scored for this specific facility.
+          Should never exceed `mort_group_measure_count` — enforced by
+          the model-level `dbt_utils.expression_is_true` test.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              count_of_facility_mort_measures <= mort_group_measure_count
+              or count_of_facility_mort_measures is null
+              or mort_group_measure_count is null
