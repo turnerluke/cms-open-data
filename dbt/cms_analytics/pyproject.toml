@@ -6,7 +6,7 @@ readme = "README.md"
 license = "MIT"
 authors = [{ name = "Turner Luke", email = "turnermluke@gmail.com" }]
 requires-python = ">=3.13"
-dependencies = ["dbt-core>=1.10.0,<1.12.0", "dbt-duckdb>=1.10.0,<1.12.0"]
+dependencies = ["dbt-core>=1.11.12,<1.12.0", "dbt-duckdb>=1.10.0,<1.12.0"]
 
 [project.urls]
 Repository = "https://github.com/turnerluke/cms-open-data"
