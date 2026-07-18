@@ -6,7 +6,7 @@ readme = "README.md"
 license = "MIT"
 authors = [{ name = "Turner Luke", email = "turnermluke@gmail.com" }]
 requires-python = ">=3.13"
-dependencies = ["cms-api", "dagster==1.13.12", "dagster-dbt>=0.29.7", "dbt-duckdb>=1.10.1", "duckdb>=1.0.0", "pyarrow>=18.0.0"]
+dependencies = ["cms-api", "dagster==1.13.12", "dagster-dbt>=0.29.7", "dbt-duckdb>=1.10.1", "duckdb>=1.0.0", "pyarrow>=25.0.0"]
 
 [project.urls]
 Repository = "https://github.com/turnerluke/cms-open-data"
