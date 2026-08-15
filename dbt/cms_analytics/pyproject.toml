@@ -13,7 +13,7 @@ Repository = "https://github.com/turnerluke/cms-open-data"
 Issues = "https://github.com/turnerluke/cms-open-data/issues"
 
 [dependency-groups]
-dev = ["sqlfluff>=3.2.0", "sqlfluff-templater-dbt>=3.2.0"]
+dev = ["sqlfluff>=4.3.0", "sqlfluff-templater-dbt>=3.2.0"]
 
 [tool.uv]
 package = false
