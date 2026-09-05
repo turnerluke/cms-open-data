@@ -1,0 +1,118 @@
+version: 2
+
+models:
+  - name: dim_date
+    description: |
+      Daily date spine generated with `dbt_utils.date_spine`, covering
+      2013-01-01 through 2029-12-31 — CMS open data starts around 2013,
+      and the far end leaves headroom for upcoming releases. Grain:
+      `date_day` (one row per calendar day). Extend the spine's end
+      date in the model when data approaches the boundary — the
+      model-level `dbt_utils.expression_is_true` test fails once the
+      spine ends less than a year out.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (select max(date_day) from {{ ref('dim_date') }})
+              > current_date + interval 1 year
+    columns:
+      - name: date_day
+        description: "Calendar date. Primary key — one row per day."
+        data_tests:
+          - not_null
+          - unique
+      - name: year_number
+        description: "Calendar year (e.g. `2026`)."
+        data_tests:
+          - not_null
+      - name: quarter_of_year
+        description: "Calendar quarter number, 1–4."
+        data_tests:
+          - not_null
+      - name: month_of_year
+        description: "Calendar month number, 1–12."
+        data_tests:
+          - not_null
+      - name: month_name
+        description: "Full month name (e.g. `January`)."
+      - name: day_of_month
+        description: "Day of the month, 1–31."
+        data_tests:
+          - not_null
+      - name: day_of_week
+        description: |
+          ISO day-of-week number: 1 = Monday through 7 = Sunday
+          (DuckDB `isodow`).
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 7
+                inclusive: true
+      - name: day_name
+        description: "Full day name (e.g. `Monday`)."
+      - name: is_weekend
+        description: "`TRUE` for Saturday and Sunday."
+        data_tests:
+          - not_null
+
+  - name: dim_hospital
+    description: |
+      One row per Medicare-certified hospital, conformed from
+      `stg_cms__hospital_general_information`. Keeps the descriptive
+      attributes (name, address, classification, star rating) and
+      renames `facility_id` to `ccn` so hospital facts join on a
+      consistently named key. The staging model already enforces one
+      row per CCN, so no deduplication is applied here; the per-group
+      measure-count columns stay in staging for a future quality fact.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number (staging `facility_id`). Primary
+          key — one row per hospital.
+        data_tests:
+          - not_null
+          - unique
+      - name: hospital_name
+        description: "Hospital name (staging `facility_name`)."
+      - name: address
+        description: "Street address of the hospital."
+      - name: city
+        description: "City of the hospital address."
+      - name: state
+        description: "Two-letter state or territory abbreviation."
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros.
+      - name: county
+        description: "County or parish of the hospital address."
+      - name: telephone_number
+        description: "Hospital telephone number."
+      - name: hospital_type
+        description: |
+          CMS hospital classification (e.g. `Acute Care Hospitals`,
+          `Critical Access Hospitals`, `Psychiatric`).
+      - name: hospital_ownership
+        description: |
+          Ownership category (e.g. `Voluntary non-profit - Private`,
+          `Government - Federal`, `Proprietary`).
+      - name: emergency_services
+        description: "Whether the hospital offers emergency services."
+      - name: meets_birthing_friendly_criteria
+        description: |
+          Whether the hospital meets CMS's Birthing-Friendly
+          designation criteria. `NULL` means not designated or not
+          evaluated — the source doesn't distinguish.
+      - name: hospital_overall_rating
+        description: |
+          CMS overall hospital quality rating, 1–5 stars. `NULL` when
+          CMS reports it as not available.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
