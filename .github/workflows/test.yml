@@ -97,6 +97,11 @@ jobs:
         with:
           enable-cache: true
 
+      # Fail fast if uv.lock disagrees with any pyproject.toml, so a
+      # dependency bump can never merge as a silent no-op.
+      - name: Check lockfile consistency
+        run: uv lock --check
+
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
