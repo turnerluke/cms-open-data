@@ -107,6 +107,7 @@ configuration knobs).
 | [`dagster/cms_pipelines/`](dagster/cms_pipelines/README.md) | Dagster orchestration — registry-generated assets           |
 | [`dbt/cms_analytics/`](dbt/cms_analytics/README.md)         | dbt models on DuckDB (staging → marts)                      |
 | [`docs/`](docs/)                                            | Docs and policies (testing standards, `typing.Any` ban)     |
+| [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)                | How the repo is built — dev setup, agent tooling, standards |
 | `scripts/`                                                  | Maintenance tooling, incl. the dbt-sources generator        |
 | `tests/`                                                    | Repo-wide standards tests (layout, coverage, sync checks)   |
 | `data/`                                                     | Local landing zone: raw Parquet extracts + DuckDB warehouse |
