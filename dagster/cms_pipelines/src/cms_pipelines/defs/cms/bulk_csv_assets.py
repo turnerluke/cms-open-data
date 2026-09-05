@@ -13,9 +13,10 @@ via ``COPY ... TO ... (FORMAT PARQUET)``. The CSV is never materialized
 in Python memory, just streamed through DuckDB's vectorized engine.
 
 We bypass the Parquet IO manager because returning a ``pyarrow.Table``
-would defeat the streaming win — but we reuse its on-disk layout
-(``<root>/<asset_name>/<run_id>.parquet``) so dbt's existing
-``external_location`` glob picks the files up unchanged.
+would defeat the streaming win — but we reuse its on-disk layout and
+publish helpers (stage to a temp name, atomically promote to
+``<root>/<asset_name>/data.parquet``) so dbt's existing
+``external_location`` glob sees exactly one live file per asset.
 """
 
 from collections.abc import Callable
@@ -31,6 +32,7 @@ from cms_api import (
 )
 import duckdb
 
+from cms_pipelines.defs.io_managers.parquet import publish_parquet, staged_write
 from cms_pipelines.defs.resources import resolve_raw_root
 from dagster import AssetExecutionContext, AssetsDefinition, MaterializeResult, MetadataValue, asset
 
@@ -103,16 +105,14 @@ def _build_asset(spec: DatasetSpec) -> AssetsDefinition:
         description=spec.description,
     )
     def _generated(context: AssetExecutionContext) -> MaterializeResult:
-        out_path = Path(resolve_raw_root()) / asset_name / f"{context.run.run_id}.parquet"
         csv_url = resolve(spec)
         context.log.info("Bulk-loading %s from %s", asset_name, csv_url)
-        row_count = _run_bulk_load(csv_url=csv_url, out_path=out_path)
-        if row_count == 0:
-            # Don't leave an empty Parquet behind — dbt's external_location
-            # glob would happily pick it up.
-            out_path.unlink(missing_ok=True)
-            msg = f"{asset_name} produced zero rows; refusing to land empty Parquet"
-            raise RuntimeError(msg)
+        with staged_write(Path(resolve_raw_root()) / asset_name, context.run.run_id) as staged:
+            row_count = _run_bulk_load(csv_url=csv_url, out_path=staged)
+            if row_count == 0:
+                msg = f"{asset_name} produced zero rows; refusing to land empty Parquet"
+                raise RuntimeError(msg)
+            out_path = publish_parquet(staged)
         return MaterializeResult(
             metadata={
                 "path": MetadataValue.path(str(out_path)),
