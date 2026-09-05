@@ -20,6 +20,12 @@ models:
         drug-years are **dropped** (11,038 of 72,680 unpivoted rows),
         so the fact only contains years with at least one populated
         value.
+      - Staging's pre-computed year-pair columns
+        (`change_avg_spending_per_dosage_unit_2023_2024` and
+        `cagr_avg_spending_per_dosage_unit_2020_2024`) are omitted:
+        they're bound to specific year pairs and don't fit the long
+        grain. `total_spending_yoy_change` covers the year-over-year
+        use case.
 
       Per-claim and per-beneficiary costs appear twice: the
       `avg_spending_per_*` columns are CMS's pre-computed averages
@@ -51,9 +57,16 @@ models:
       - name: total_manufacturers
         description: "Number of manufacturers of the drug."
       - name: spending_year
-        description: "Calendar year the metrics cover (2020-2024)."
+        description: |
+          Calendar year the metrics cover. The `accepted_values` test
+          mirrors the year list in the model's Jinja loop — extending
+          one without the other fails the build loudly.
         data_tests:
           - not_null
+          - accepted_values:
+              arguments:
+                values: [2020, 2021, 2022, 2023, 2024]
+                quote: false
       - name: total_spending
         description: |
           Total Part D spending for the drug-manufacturer-year, in
@@ -65,6 +78,11 @@ models:
                 inclusive: true
       - name: total_dosage_units
         description: "Total dosage units dispensed."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
       - name: total_claims
         description: "Total Part D claims."
         data_tests:
@@ -74,6 +92,11 @@ models:
                 inclusive: true
       - name: total_beneficiaries
         description: "Distinct beneficiaries with a claim for the drug."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
       - name: avg_spending_per_dosage_unit_weighted
         description: |
           CMS-reported average spending per dosage unit, weighted by
