@@ -102,6 +102,41 @@ def test_bulk_csv_asset_streams_csv_to_parquet(
     assert "rndrng_npi" in table.column_names
 
 
+def test_bulk_csv_asset_rematerialization_leaves_one_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Re-running the asset replaces the landed Parquet instead of accumulating runs."""
+    monkeypatch.setenv(CMS_RAW_ROOT_ENV, str(tmp_path))
+    spec = _bulk_spec()
+    asset_def = _bulk_asset(spec)
+
+    first_csv = _write_fixture(tmp_path)
+    monkeypatch.setattr(
+        bulk_csv_assets,
+        "get_data_api_csv_url",
+        lambda dataset_id, *, year=None: str(first_csv),
+    )
+    assert materialize([asset_def]).success
+
+    second_csv = _write_fixture(
+        tmp_path,
+        "rndrng_npi,rndrng_prvdr_last_org_name,rndrng_prvdr_state_abrvtn,bene_unique_cnt\n1111111111,Hospital C,NY,400\n",
+    )
+    monkeypatch.setattr(
+        bulk_csv_assets,
+        "get_data_api_csv_url",
+        lambda dataset_id, *, year=None: str(second_csv),
+    )
+    assert materialize([asset_def]).success
+
+    parquets = list((tmp_path / f"cms_{spec.key}").glob("*.parquet"))
+    assert len(parquets) == 1
+    table = pq.read_table(parquets[0])
+    assert table.num_rows == 1
+    assert table.column("rndrng_npi").to_pylist() == [1111111111]
+
+
 def test_bulk_csv_asset_emits_row_count_metadata(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -145,8 +180,11 @@ def test_bulk_csv_asset_refuses_empty_csv(
     with pytest.raises(Exception, match="zero rows"):
         materialize([asset_def])
 
-    # Empty Parquet must not be left behind for dbt to glob into.
-    assert not list((tmp_path / f"cms_{spec.key}").glob("*.parquet"))
+    # Empty Parquet must not be left behind for dbt to glob into, and the
+    # failed run's staged file must not leak either.
+    asset_dir = tmp_path / f"cms_{spec.key}"
+    assert not list(asset_dir.glob("*.parquet"))
+    assert not list(asset_dir.glob(".*.tmp"))
 
 
 class _BareMetastoreCase(NamedTuple):

@@ -136,6 +136,36 @@ def test_qhp_asset_streams_zip_to_parquet(
     assert table.column_names == ["State Code", "FIPS County Code", "County Name"]
 
 
+def test_qhp_asset_rematerialization_leaves_one_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Re-running the asset replaces the landed Parquet instead of accumulating runs."""
+    monkeypatch.setenv(CMS_RAW_ROOT_ENV, str(tmp_path))
+    spec = _qhp_spec()
+    asset_def = _qhp_asset(spec)
+
+    first_xlsx = tmp_path / "first.xlsx"
+    _write_qhp_xlsx(dest=first_xlsx)
+    first_zip = tmp_path / "first.zip"
+    _zip_xlsx(xlsx_path=first_xlsx, zip_path=first_zip)
+    _patch_qhp_inputs(monkeypatch, fixture_zip=first_zip)
+    assert materialize([asset_def]).success
+
+    second_xlsx = tmp_path / "second.xlsx"
+    _write_qhp_xlsx(dest=second_xlsx, rows=[("NY", "36001", "Albany")], a1_count="1 displayed records")
+    second_zip = tmp_path / "second.zip"
+    _zip_xlsx(xlsx_path=second_xlsx, zip_path=second_zip)
+    _patch_qhp_inputs(monkeypatch, fixture_zip=second_zip)
+    assert materialize([asset_def]).success
+
+    parquets = list((tmp_path / f"cms_{spec.key}").glob("*.parquet"))
+    assert len(parquets) == 1
+    table = pq.read_table(parquets[0])
+    assert table.num_rows == 1
+    assert table.column("State Code").to_pylist() == ["NY"]
+
+
 def test_qhp_asset_emits_zip_url_and_row_count_metadata(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -179,8 +209,11 @@ def test_qhp_asset_refuses_empty_xlsx(
     with pytest.raises(Exception, match="zero rows"):
         materialize([asset_def])
 
-    # Empty Parquet must not be left behind for dbt to glob into.
-    assert not list((tmp_path / f"cms_{spec.key}").glob("*.parquet"))
+    # Empty Parquet must not be left behind for dbt to glob into, and the
+    # failed run's staged file must not leak either.
+    asset_dir = tmp_path / f"cms_{spec.key}"
+    assert not list(asset_dir.glob("*.parquet"))
+    assert not list(asset_dir.glob(".*.tmp"))
 
 
 def test_qhp_asset_rejects_zip_without_xlsx(

@@ -40,6 +40,7 @@ select = ["ALL"]
 ignore = [
     "COM812",
     "COM819",
+    "CPY001", # stabilized in ruff 0.16; this repo does not use copyright headers
     "D100",
     "D203",
     "D213",

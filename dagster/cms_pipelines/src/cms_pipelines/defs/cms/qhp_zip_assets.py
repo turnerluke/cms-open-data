@@ -42,6 +42,7 @@ from cms_api import HEALTHCARE_GOV_DKAN_BASE_URL, DatasetSpec, get_dkan_dataset_
 import duckdb
 import httpx
 
+from cms_pipelines.defs.io_managers.parquet import publish_parquet, staged_write
 from cms_pipelines.defs.resources import resolve_raw_root
 from dagster import AssetExecutionContext, AssetsDefinition, MaterializeResult, MetadataValue, asset
 
@@ -180,21 +181,19 @@ def _build_asset(spec: DatasetSpec) -> AssetsDefinition:
         description=spec.description,
     )
     def _generated(context: AssetExecutionContext) -> MaterializeResult:
-        out_path = Path(resolve_raw_root()) / asset_name / f"{context.run.run_id}.parquet"
         zip_url = resolve(spec)
         context.log.info("Downloading %s from %s", asset_name, zip_url)
-        with tempfile.TemporaryDirectory(prefix=f"{asset_name}-") as tmp:
-            tmp_dir = Path(tmp)
-            zip_path = tmp_dir / "download.zip"
-            _download_zip(url=zip_url, dest=zip_path)
-            xlsx_path = _extract_single_xlsx(zip_path=zip_path, dest_dir=tmp_dir)
-            row_count = _run_xlsx_to_parquet(xlsx_path=xlsx_path, out_path=out_path)
-        if row_count == 0:
-            # Don't leave an empty Parquet behind — dbt's external_location
-            # glob would happily pick it up.
-            out_path.unlink(missing_ok=True)
-            msg = f"{asset_name} produced zero rows; refusing to land empty Parquet"
-            raise RuntimeError(msg)
+        with staged_write(Path(resolve_raw_root()) / asset_name, context.run.run_id) as staged:
+            with tempfile.TemporaryDirectory(prefix=f"{asset_name}-") as tmp:
+                tmp_dir = Path(tmp)
+                zip_path = tmp_dir / "download.zip"
+                _download_zip(url=zip_url, dest=zip_path)
+                xlsx_path = _extract_single_xlsx(zip_path=zip_path, dest_dir=tmp_dir)
+                row_count = _run_xlsx_to_parquet(xlsx_path=xlsx_path, out_path=staged)
+            if row_count == 0:
+                msg = f"{asset_name} produced zero rows; refusing to land empty Parquet"
+                raise RuntimeError(msg)
+            out_path = publish_parquet(staged)
         return MaterializeResult(
             metadata={
                 "path": MetadataValue.path(str(out_path)),
