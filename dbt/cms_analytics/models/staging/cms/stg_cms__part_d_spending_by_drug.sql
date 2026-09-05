@@ -21,6 +21,8 @@ renamed as (
         avg_spnd_per_dsg_unt_wghtd_2020 as avg_spending_per_dosage_unit_weighted_2020,
         avg_spnd_per_clm_2020 as avg_spending_per_claim_2020,
         avg_spnd_per_bene_2020 as avg_spending_per_beneficiary_2020,
+        -- is_outlier_* flags are three-valued: null when the drug
+        -- wasn't marketed that year (applies to every year below)
         outlier_flag_2020 = 1 as is_outlier_2020,
 
         -- 2021 spending

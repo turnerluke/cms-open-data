@@ -24,7 +24,7 @@ renamed as (
         trim(measure_name) as measure_name,
         nullif(trim(compared_to_national), 'Not Available') as compared_to_national,
 
-        -- results ('Not Available' becomes null)
+        -- results ('Not Available'/'Not Applicable' become null)
         try_cast(denominator as int) as denominator,
         try_cast(score as decimal(10, 3)) as score,
         try_cast(lower_estimate as decimal(10, 3)) as lower_estimate,
