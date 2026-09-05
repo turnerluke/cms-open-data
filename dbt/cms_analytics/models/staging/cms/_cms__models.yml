@@ -72,3 +72,249 @@ models:
               count_of_facility_mort_measures <= mort_group_measure_count
               or count_of_facility_mort_measures is null
               or mort_group_measure_count is null
+
+  - name: stg_cms__part_d_spending_by_drug
+    description: |
+      Medicare Part D Spending by Drug (CMS data-api/v1 dataset
+      `7e0b4365-fd63-4a29-8f5e-e0ac9f66a81b`), wide by year
+      (2020–2024). Staging only renames the abbreviated CMS columns
+      (`Tot_Spndng_2023` → `total_spending_2023`, etc.) and maps the
+      0/1 outlier flags to booleans. The flags are three-valued:
+      `NULL` when the drug wasn't marketed that year, so consumers
+      must handle `NULL` explicitly rather than filtering with a bare
+      `not is_outlier_*`. The unpivot to a long
+      drug-year grain belongs in the mart layer. Grain:
+      (`brand_name`, `generic_name`, `manufacturer_name`); the
+      `manufacturer_name` value `'Overall'` is a roll-up row across
+      manufacturers for the drug.
+    columns:
+      - name: brand_name
+        description: "Drug brand name (trimmed `Brnd_Name`)."
+        data_tests:
+          - not_null
+      - name: generic_name
+        description: "Drug generic name (trimmed `Gnrc_Name`)."
+        data_tests:
+          - not_null
+      - name: manufacturer_name
+        description: |
+          Manufacturer name (trimmed `Mftr_Name`), or `'Overall'` for
+          the roll-up row aggregating all manufacturers of the drug.
+        data_tests:
+          - not_null
+      - name: total_manufacturers
+        description: |
+          Number of manufacturers of the drug (`Tot_Mftr` cast to
+          `int`).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - brand_name
+              - generic_name
+              - manufacturer_name
+
+  - name: stg_cms__medicare_part_b_spending_by_drug
+    description: |
+      Medicare Part B Spending by Drug (CMS data-api/v1 dataset
+      `76a714ad-3a2c-43ac-b76d-9dadf8f7d890`), wide by year
+      (2020–2024). Staging only renames the abbreviated CMS columns
+      and maps the 0/1 outlier flags to booleans — the unpivot to a
+      long drug-year grain belongs in the mart layer. Grain:
+      `hcpcs_code`.
+    columns:
+      - name: hcpcs_code
+        description: |
+          HCPCS billing code identifying the drug. Primary key — one
+          row per code.
+        data_tests:
+          - not_null
+          - unique
+      - name: hcpcs_description
+        description: "HCPCS code description (trimmed)."
+      - name: brand_name
+        description: "Drug brand name (trimmed `Brnd_Name`)."
+      - name: generic_name
+        description: "Drug generic name (trimmed `Gnrc_Name`)."
+
+  - name: stg_cms__hospital_complications_deaths
+    description: |
+      Complications and Deaths — Hospital level, from CMS Care
+      Compare (DKAN dataset `ynj2-r877`). One row per hospital per
+      measure (mortality and surgical-complication measures such as
+      `MORT_30_AMI` or `COMP_HIP_KNEE`). Numeric result columns
+      arrive as strings with a `'Not Available'` sentinel —
+      `try_cast` turns those into `NULL`s; `MM/DD/YYYY` period
+      bounds become proper `date`s. Grain: (`facility_id`,
+      `measure_id`).
+    columns:
+      - name: facility_id
+        description: "CMS Certification Number (CCN) of the hospital."
+        data_tests:
+          - not_null
+      - name: measure_id
+        description: "CMS measure identifier (e.g. `MORT_30_AMI`)."
+        data_tests:
+          - not_null
+      - name: compared_to_national
+        description: |
+          Categorical comparison of the hospital's result to the
+          national rate/value; `'Not Available'` becomes `NULL`.
+          Source wording variants (e.g. `'... the National Rate'` vs
+          `'... the National Value'`) pass through as-is.
+      - name: score
+        description: |
+          Measure result (rate per 100 or index value). `'Not
+          Available'` becomes `NULL` via `try_cast`.
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros (raw `zip_code`).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - facility_id
+              - measure_id
+
+  - name: stg_cms__hospital_unplanned_visits
+    description: |
+      Unplanned Hospital Visits — Hospital level, from CMS Care
+      Compare (DKAN dataset `632h-zaca`). One row per hospital per
+      measure (readmission and excess-days measures such as
+      `READM_30_HF`, `EDAC_30_AMI`, `OP_32`). Numeric result columns
+      arrive as strings with a `'Not Available'` sentinel —
+      `try_cast` turns those into `NULL`s; `MM/DD/YYYY` period
+      bounds become proper `date`s. Grain: (`facility_id`,
+      `measure_id`).
+    columns:
+      - name: facility_id
+        description: "CMS Certification Number (CCN) of the hospital."
+        data_tests:
+          - not_null
+      - name: measure_id
+        description: "CMS measure identifier (e.g. `READM_30_HF`)."
+        data_tests:
+          - not_null
+      - name: compared_to_national
+        description: |
+          Categorical comparison of the hospital's result to the
+          national rate; `'Not Available'` becomes `NULL`. Source
+          casing variants (`'Number of Cases Too Small'` vs
+          `'Number of cases too small'`) pass through as-is.
+      - name: score
+        description: |
+          Measure result (readmission rate or excess days per 100
+          discharges). `'Not Available'` becomes `NULL` via
+          `try_cast`.
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros (raw `zip_code`).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - facility_id
+              - measure_id
+
+  - name: stg_cms__hospital_hcahps
+    description: |
+      Patient Survey (HCAHPS) — Hospital level, from CMS Care Compare
+      (DKAN dataset `dgck-syfz`). One row per hospital per HCAHPS
+      measure; each survey topic ships as a family of measure IDs
+      (answer-distribution percents like `H_COMP_1_A_P`, linear mean
+      scores like `H_COMP_1_LINEAR_SCORE`, and star ratings), so the
+      result columns are sparsely populated depending on
+      `measure_id`. Numeric results arrive as strings with `'Not
+      Available'` / `'Not Applicable'` sentinels — `try_cast` turns
+      those into `NULL`s; `MM/DD/YYYY` period bounds become proper
+      `date`s. Grain: (`facility_id`, `measure_id`).
+    columns:
+      - name: facility_id
+        description: "CMS Certification Number (CCN) of the hospital."
+        data_tests:
+          - not_null
+      - name: measure_id
+        description: |
+          HCAHPS measure identifier (raw `hcahps_measure_id`, e.g.
+          `H_COMP_1_A_P` or `H_STAR_RATING`).
+        data_tests:
+          - not_null
+      - name: patient_survey_star_rating
+        description: |
+          1–5 star rating for star-rating measure rows; `'Not
+          Available'` / `'Not Applicable'` become `NULL` via
+          `try_cast`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: answer_percent
+        description: |
+          Percent of respondents giving the answer for
+          answer-distribution measure rows (raw
+          `hcahps_answer_percent`); sentinels become `NULL`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: linear_mean_value
+        description: |
+          0–100 linear mean score for linear-score measure rows (raw
+          `hcahps_linear_mean_value`); sentinels become `NULL`.
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros (raw `zip_code`).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - facility_id
+              - measure_id
+
+  - name: stg_cms__hospital_associated_infections
+    description: |
+      Healthcare-Associated Infections — Hospital level, from CMS
+      Care Compare (DKAN dataset `77hc-ibv8`). One row per hospital
+      per measure; each HAI metric ships as a family of measure IDs
+      (`HAI_1_SIR`, `HAI_1_CILOWER`, `HAI_1_ELIGCASES`, …), so
+      `score` mixes SIRs, confidence bounds, and case counts
+      depending on `measure_id`. `'Not Available'` sentinels become
+      `NULL` via `try_cast`; `MM/DD/YYYY` period bounds become
+      proper `date`s. Grain: (`facility_id`, `measure_id`).
+    columns:
+      - name: facility_id
+        description: "CMS Certification Number (CCN) of the hospital."
+        data_tests:
+          - not_null
+      - name: measure_id
+        description: |
+          CMS measure identifier (e.g. `HAI_1_SIR` for the CLABSI
+          standardized infection ratio).
+        data_tests:
+          - not_null
+      - name: compared_to_national
+        description: |
+          Categorical comparison to the national benchmark; `'Not
+          Available'` becomes `NULL`.
+      - name: score
+        description: |
+          Measure value — meaning depends on the `measure_id` suffix
+          (SIR, CI bound, or case count). `'Not Available'` becomes
+          `NULL` via `try_cast`.
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros (raw `zip_code`).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - facility_id
+              - measure_id
