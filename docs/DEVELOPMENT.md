@@ -16,7 +16,7 @@ uv sync --all-packages --all-groups
 uv run pre-commit install
 ```
 
-Local checks mirror CI exactly. `uv run pre-commit run --all-files`
+Local checks closely mirror CI. `uv run pre-commit run --all-files`
 reproduces the lint workflow, and [`scripts/local-ci/`](../scripts/local-ci/)
 holds the script that reproduces the per-subproject test matrix — the
 idea being that anything CI would reject should fail on the developer's
@@ -42,9 +42,10 @@ The agent-facing configuration is checked in and public:
 [`scripts/ralph/`](../scripts/ralph/README.md) is a maintainer-only
 toolkit for running autonomous agent loops ("Ralph Wiggum" loops):
 each run drives a headless Claude session in its own sibling git
-worktree until a feature branch is ready for a normal PR. It has a
-one-time billing-cap prerequisite and several layers of cost control —
-see its [README](../scripts/ralph/README.md) for usage and details.
+worktree until a completion sentinel fires or the iteration cap is
+reached, aiming to leave a feature branch ready for a normal PR. It
+has a one-time billing-cap prerequisite and several layers of cost
+control; see its README for usage and details.
 
 ## Repo standards tests
 
