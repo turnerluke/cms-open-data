@@ -5,10 +5,10 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](pyproject.toml)
 
-A modern data stack for Medicare and Medicaid open data. A registry of 40
-CMS datasets — Provider Data Catalog, `data.cms.gov` bulk files, Open
-Payments, Medicaid, and healthcare.gov — drives a Dagster pipeline that
-lands each dataset as Parquet, and dbt models the results on DuckDB.
+A registry of 40 CMS datasets — Provider Data Catalog, `data.cms.gov`
+bulk files, Open Payments, Medicaid, and healthcare.gov — drives a
+Dagster pipeline that lands each dataset as Parquet, and dbt models the
+results on DuckDB.
 Typed API clients, orchestration, and transformations live together in
 one uv workspace.
 
@@ -90,7 +90,7 @@ Then model the landed data with dbt:
 
 ```bash
 cd ../../dbt/cms_analytics
-uv run dbt deps --profiles-dir .
+uv run dbt deps
 uv run dbt build --profiles-dir .
 ```
 
@@ -105,18 +105,18 @@ configuration knobs).
 | ----------------------------------------------------------- | ----------------------------------------------------------- |
 | [`libs/cms_api/`](libs/cms_api/README.md)                   | Typed Python clients for CMS public APIs + dataset registry |
 | [`dagster/cms_pipelines/`](dagster/cms_pipelines/README.md) | Dagster orchestration — registry-generated assets           |
-| [`dbt/cms_analytics/`](dbt/cms_analytics/README.md)         | dbt models on DuckDB (staging → intermediate → marts)       |
+| [`dbt/cms_analytics/`](dbt/cms_analytics/README.md)         | dbt models on DuckDB (staging → marts)                      |
 | [`docs/`](docs/)                                            | Docs and policies (testing standards, `typing.Any` ban)     |
 | `scripts/`                                                  | Maintenance tooling, incl. the dbt-sources generator        |
 | `tests/`                                                    | Repo-wide standards tests (layout, coverage, sync checks)   |
-| `data/`                                                     | Local lakehouse: raw Parquet + DuckDB warehouse (untracked) |
+| `data/`                                                     | Local landing zone: raw Parquet extracts + DuckDB warehouse |
 
 ## Status
 
-Extraction is the mature half of this project: all 40 registry datasets
-land as Parquet through Dagster. The dbt layer is early — one staging
-model exists today and the marts directories are scaffolding. Mart PRs
-are in progress; this section will shrink as they merge.
+Extraction is the mature half of this project: every registry dataset
+has a Dagster asset that extracts it to Parquet. The dbt layer is
+early — one staging model exists today, and the intermediate and marts
+directories are scaffolding. Marts are next.
 
 ## License
 
