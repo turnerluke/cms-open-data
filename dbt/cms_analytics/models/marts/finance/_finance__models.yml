@@ -1,0 +1,116 @@
+version: 2
+
+models:
+  - name: fct_part_d_drug_spending
+    description: |
+      Medicare Part D drug spending, unpivoted from the wide-by-year
+      `stg_cms__part_d_spending_by_drug` staging table into one row
+      per drug, manufacturer, and year. Grain: (`brand_name`,
+      `generic_name`, `manufacturer_name`, `spending_year`).
+
+      Two modeling choices to be aware of:
+
+      - CMS publishes an `'Overall'` manufacturer row that rolls up
+        all manufacturers of a drug. Those rows are **kept** and
+        flagged with `is_manufacturer_rollup` so drug-level analysis
+        stays a simple filter — but summing `total_spending` across
+        all rows double-counts unless you filter on the flag.
+      - A year in which every metric column and the outlier flag are
+        `NULL` means the drug wasn't marketed that year. Those empty
+        drug-years are **dropped** (11,038 of 72,680 unpivoted rows),
+        so the fact only contains years with at least one populated
+        value.
+
+      Per-claim and per-beneficiary costs appear twice: the
+      `avg_spending_per_*` columns are CMS's pre-computed averages
+      (weighted, and subject to CMS suppression rules), while the
+      `*_derived` columns are recomputed here from the totals.
+      Suppressed inputs stay `NULL` — nothing is coalesced to 0.
+    columns:
+      - name: brand_name
+        description: "Drug brand name."
+        data_tests:
+          - not_null
+      - name: generic_name
+        description: "Drug generic name."
+        data_tests:
+          - not_null
+      - name: manufacturer_name
+        description: |
+          Manufacturer name, or `'Overall'` for the roll-up row
+          aggregating all manufacturers of the drug.
+        data_tests:
+          - not_null
+      - name: is_manufacturer_rollup
+        description: |
+          `TRUE` when `manufacturer_name = 'Overall'`, i.e. the row
+          aggregates all manufacturers of the drug. Exclude these rows
+          when summing across the fact to avoid double-counting.
+        data_tests:
+          - not_null
+      - name: total_manufacturers
+        description: "Number of manufacturers of the drug."
+      - name: spending_year
+        description: "Calendar year the metrics cover (2020-2024)."
+        data_tests:
+          - not_null
+      - name: total_spending
+        description: |
+          Total Part D spending for the drug-manufacturer-year, in
+          dollars. `NULL` when suppressed by CMS.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_dosage_units
+        description: "Total dosage units dispensed."
+      - name: total_claims
+        description: "Total Part D claims."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_beneficiaries
+        description: "Distinct beneficiaries with a claim for the drug."
+      - name: avg_spending_per_dosage_unit_weighted
+        description: |
+          CMS-reported average spending per dosage unit, weighted by
+          claims volume.
+      - name: avg_spending_per_claim
+        description: "CMS-reported average spending per claim."
+      - name: avg_spending_per_beneficiary
+        description: |
+          CMS-reported average spending per beneficiary. Can be
+          suppressed (`NULL`) where beneficiary counts are small.
+      - name: spending_per_claim_derived
+        description: |
+          `total_spending / total_claims`, recomputed from totals to
+          sidestep CMS's pre-averaged (and sometimes suppressed)
+          columns. `NULL` when either input is `NULL` or claims are 0.
+      - name: spending_per_beneficiary_derived
+        description: |
+          `total_spending / total_beneficiaries`, recomputed from
+          totals. `NULL` when either input is `NULL` or beneficiaries
+          are 0.
+      - name: total_spending_yoy_change
+        description: |
+          Change in `total_spending` versus the immediately preceding
+          year for the same drug-manufacturer. `NULL` for the first
+          observed year or when the prior year is missing (unmarketed
+          years are dropped, so gaps are possible).
+      - name: is_outlier
+        description: |
+          CMS price-outlier flag. Three-valued: `NULL` means the drug
+          wasn't marketed or flagged for that year, so filter with an
+          explicit `is_outlier is not true` style predicate rather
+          than a bare `not is_outlier`.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - brand_name
+              - generic_name
+              - manufacturer_name
+              - spending_year
