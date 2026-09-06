@@ -10,8 +10,8 @@ renamed as (
         -- identifiers (one row per HCPCS billing code)
         trim(hcpcs_cd) as hcpcs_code,
         trim(hcpcs_desc) as hcpcs_description,
-        trim(brnd_name) as brand_name,
-        trim(gnrc_name) as generic_name,
+        nullif(trim(brnd_name), '') as brand_name,
+        nullif(trim(gnrc_name), '') as generic_name,
 
         -- 2020 spending
         tot_spndng_2020 as total_spending_2020,

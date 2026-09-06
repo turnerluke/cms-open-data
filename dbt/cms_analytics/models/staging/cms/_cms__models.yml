@@ -89,11 +89,11 @@ models:
       manufacturers for the drug.
     columns:
       - name: brand_name
-        description: "Drug brand name (trimmed `Brnd_Name`)."
+        description: "Drug brand name (trimmed `Brnd_Name`; empty strings become `NULL`)."
         data_tests:
           - not_null
       - name: generic_name
-        description: "Drug generic name (trimmed `Gnrc_Name`)."
+        description: "Drug generic name (trimmed `Gnrc_Name`; empty strings become `NULL`)."
         data_tests:
           - not_null
       - name: manufacturer_name
@@ -133,9 +133,9 @@ models:
       - name: hcpcs_description
         description: "HCPCS code description (trimmed)."
       - name: brand_name
-        description: "Drug brand name (trimmed `Brnd_Name`)."
+        description: "Drug brand name (trimmed `Brnd_Name`; empty strings become `NULL`)."
       - name: generic_name
-        description: "Drug generic name (trimmed `Gnrc_Name`)."
+        description: "Drug generic name (trimmed `Gnrc_Name`; empty strings become `NULL`)."
 
   - name: stg_cms__hospital_complications_deaths
     description: |
