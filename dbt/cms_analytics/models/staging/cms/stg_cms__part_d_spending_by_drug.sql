@@ -8,8 +8,20 @@ renamed as (
 
     select
         -- identifiers (one row per brand / generic / manufacturer)
-        nullif(trim(brnd_name), '') as brand_name,
-        nullif(trim(gnrc_name), '') as generic_name,
+        -- the source appends a trailing `*` to the brand name (never
+        -- the generic name in the current vintage, but strip both for
+        -- symmetry with Part B) when the row's estimates aggregate
+        -- brand and generic versions of the drug; strip it so names
+        -- conform across CMS drug files and keep the signal in
+        -- is_brand_generic_aggregate
+        rtrim(nullif(trim(brnd_name), ''), '* ') as brand_name,
+        rtrim(nullif(trim(gnrc_name), ''), '* ') as generic_name,
+        coalesce(trim(brnd_name) like '%*', false)
+        or coalesce(trim(gnrc_name) like '%*', false)
+            as is_brand_generic_aggregate,
+        -- TODO: manufacturer_name also carries the trailing-`*`
+        -- aggregate marker (94 distinct names); strip + flag it here
+        -- if manufacturer ever becomes a join key
         trim(mftr_name) as manufacturer_name,
         try_cast(tot_mftr as int) as total_manufacturers,
 

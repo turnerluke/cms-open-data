@@ -233,13 +233,15 @@ models:
         description: "HCPCS code description."
       - name: brand_name
         description: |
-          Drug brand name as published in the Part B file. `NULL`
+          Drug brand name as published in the Part B file (minus the
+          trailing-`*` aggregate marker, stripped in staging). `NULL`
           when the code has no named drug; a single value can list
           several brands billed under the same code.
       - name: generic_name
         description: |
-          Drug generic name as published in the Part B file. `NULL`
-          when the code has no named drug.
+          Drug generic name as published in the Part B file (minus
+          the trailing-`*` aggregate marker, stripped in staging).
+          `NULL` when the code has no named drug.
       - name: drug_key
         description: |
           Surrogate key into `dim_drug`, hashed from the upper-cased
@@ -347,13 +349,10 @@ models:
         65+) column family is not carried into the fact; read it
         from staging when age-band analysis is needed.
       - `drug_key` is hashed from the upper-cased drug names with
-        the same expression as `dim_drug`, but about 16% of rows
-        orphan: the spending files that feed `dim_drug` append a
-        trailing `*` (flagging estimates aggregated across brand and
-        generic versions) to the brand name — and sometimes the
-        generic name — that the prescriber file omits, so those
-        drugs hash to different keys — the relationships test warns
-        rather than errors (see the `TODO` on the test).
+        the same expression as `dim_drug`. The spending files that
+        feed `dim_drug` star-mark aggregated names, but staging
+        strips that marker, so every row here conforms to `dim_drug`
+        — the relationships test runs at error severity.
     columns:
       - name: npi
         description: |
@@ -400,17 +399,6 @@ models:
               arguments:
                 to: ref('dim_drug')
                 field: drug_key
-              config:
-                # TODO: promote to error once dim_drug strips the
-                # spending files' trailing-`*` marker (it flags
-                # estimates aggregated across brand and generic
-                # versions; it appears on the brand name and
-                # sometimes the generic name too). 4,542,646 rows
-                # over 153 distinct drugs orphan today, e.g.
-                # `PANTOPRAZOLE SODIUM*` vs this file's
-                # `Pantoprazole Sodium`; stripping the marker from
-                # both dim_drug name columns conforms all 153.
-                severity: warn
       - name: total_claims
         description: |
           Part D claims for the prescriber-drug, including refills.

@@ -10,8 +10,15 @@ renamed as (
         -- identifiers (one row per HCPCS billing code)
         trim(hcpcs_cd) as hcpcs_code,
         trim(hcpcs_desc) as hcpcs_description,
-        nullif(trim(brnd_name), '') as brand_name,
-        nullif(trim(gnrc_name), '') as generic_name,
+        -- the source appends a trailing `*` to both names when the
+        -- row's estimates aggregate brand and generic versions of the
+        -- drug; strip it so names conform across CMS drug files and
+        -- keep the signal in is_brand_generic_aggregate
+        rtrim(nullif(trim(brnd_name), ''), '* ') as brand_name,
+        rtrim(nullif(trim(gnrc_name), ''), '* ') as generic_name,
+        coalesce(trim(brnd_name) like '%*', false)
+        or coalesce(trim(gnrc_name) like '%*', false)
+            as is_brand_generic_aggregate,
 
         -- 2020 spending
         tot_spndng_2020 as total_spending_2020,

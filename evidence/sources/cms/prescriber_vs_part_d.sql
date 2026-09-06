@@ -1,8 +1,9 @@
 -- Top 25 drugs by prescriber-billed cost, joined to the same drug's
 -- gross Part D spending (manufacturer roll-up, latest year) via
--- drug_key. The key is derived identically in both facts, so a NULL
--- part_d_total_spending means the Part D spending file names the drug
--- differently (e.g. trailing-`*` aggregated names).
+-- drug_key. The key is derived identically in both facts and staging
+-- strips the Part D spending file's trailing-`*` aggregate marker,
+-- so a NULL part_d_total_spending means the drug is genuinely absent
+-- from the Part D spending file (none of the current top 25 are).
 with top_drugs as (
     select
         brand_name,
