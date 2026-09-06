@@ -229,7 +229,10 @@ models:
       `measure_id`. Numeric results arrive as strings with `'Not
       Available'` / `'Not Applicable'` sentinels — `try_cast` turns
       those into `NULL`s; `MM/DD/YYYY` period bounds become proper
-      `date`s. Grain: (`facility_id`, `measure_id`).
+      `date`s. Grain: (`facility_id`, `measure_id`). The model-level
+      `dbt_utils.expression_is_true` test enforces that at most one
+      result family is populated per row — downstream marts rely on
+      that to coalesce a single score.
     columns:
       - name: facility_id
         description: "CMS Certification Number (CCN) of the hospital."
@@ -277,6 +280,12 @@ models:
             combination_of_columns:
               - facility_id
               - measure_id
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              cast(patient_survey_star_rating is not null as int)
+              + cast(answer_percent is not null as int)
+              + cast(linear_mean_value is not null as int) <= 1
 
   - name: stg_cms__hospital_associated_infections
     description: |

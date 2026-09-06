@@ -1,0 +1,113 @@
+version: 2
+
+models:
+  - name: fct_hospital_quality
+    description: |
+      Hospital quality measures in long format, unioned from the four
+      Care Compare measure staging models with a `measure_domain`
+      discriminator. Grain: (`ccn`, `measure_domain`, `measure_id`) —
+      one row per hospital per measure. Each source ships one snapshot
+      per measure, so the reporting period (`start_date`/`end_date`)
+      is an attribute of the row, not part of the grain.
+
+      Modeling choices to be aware of:
+
+      - `score` semantics vary by domain (see the column description):
+        the value is only comparable **within** a `measure_id`, never
+        across measures. The long shape is intended for filter-by-
+        measure and small-multiple visualization, not cross-measure
+        aggregation.
+      - Rows whose `score` is `NULL` (suppressed or reported as
+        `'Not Available'` upstream) are **kept**, so measure coverage
+        per hospital stays analyzable — count non-null scores to
+        measure participation.
+      - Source-specific extras that don't conform across domains are
+        dropped: footnotes, confidence-interval estimates
+        (`lower_estimate`/`higher_estimate`), HCAHPS answer
+        descriptions and survey response rates, and unplanned-visit
+        patient counts. They remain available in staging.
+      - Hospital address/name attributes are not inlined; join
+        `dim_hospital` on `ccn` for them.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number (staging `facility_id`). Foreign
+          key to `dim_hospital`. All five Care Compare datasets come
+          from the same DKAN provider-data catalog, so the facility
+          universe should match `dim_hospital`.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_hospital')
+                field: ccn
+              config:
+                # TODO: promote to error once a full raw-data build
+                # confirms the measure snapshots share dim_hospital's
+                # CCN universe
+                severity: warn
+      - name: measure_domain
+        description: |
+          Which Care Compare dataset the row comes from: `hcahps`
+          (patient survey), `complications_deaths`, `infections`
+          (healthcare-associated infections), or `unplanned_visits`
+          (readmissions and excess days).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - hcahps
+                  - complications_deaths
+                  - infections
+                  - unplanned_visits
+      - name: measure_id
+        description: |
+          CMS measure identifier (e.g. `H_COMP_1_A_P`, `MORT_30_AMI`,
+          `HAI_1_SIR`, `READM_30_HF`). Unique per hospital within a
+          domain.
+        data_tests:
+          - not_null
+      - name: measure_name
+        description: |
+          Human-readable measure description. For `hcahps` rows this
+          is the survey question text (staging `question`); other
+          domains pass through the source `measure_name`.
+      - name: score
+        description: |
+          Numeric measure result; `NULL` when CMS suppresses the value
+          or reports it as `'Not Available'`. Semantics depend on the
+          domain and `measure_id`:
+
+          - `hcahps`: 1–5 star rating, 0–100 answer percent, or 0–100
+            linear mean score — each HCAHPS `measure_id` carries
+            exactly one of the three.
+          - `complications_deaths`: rate per 100 or index value.
+          - `infections`: standardized infection ratio, CI bound, or
+            case count depending on the `measure_id` suffix.
+          - `unplanned_visits`: readmission rate or excess days per
+            100 discharges.
+      - name: denominator
+        description: |
+          Count of cases underlying the score: reported `denominator`
+          for `complications_deaths` and `unplanned_visits`, number
+          of completed surveys for `hcahps`. `NULL` for `infections`,
+          which publishes eligible-case counts as separate
+          `HAI_*_ELIGCASES` measure rows instead.
+      - name: compared_to_national
+        description: |
+          CMS's categorical comparison of the hospital's result to
+          the national benchmark; wording varies by domain. `NULL`
+          for `hcahps` rows (the source has no comparison column) and
+          where the source reports `'Not Available'`.
+      - name: start_date
+        description: "First day of the measurement period."
+      - name: end_date
+        description: "Last day of the measurement period."
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ccn
+              - measure_domain
+              - measure_id
