@@ -7,5 +7,5 @@ true unions — narrowing them with `isinstance` works as expected, unlike
 `Any` which silently disables the type checker.
 """
 
-type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
+type JsonValue = str | int | float | bool | list[JsonValue] | dict[str, JsonValue] | None
 type JsonObject = dict[str, JsonValue]
