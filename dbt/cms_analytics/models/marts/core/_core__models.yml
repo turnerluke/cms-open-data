@@ -65,9 +65,10 @@ models:
       `generic_name`) pair, unioned across
       `stg_cms__medicare_part_b_spending_by_drug` and
       `stg_cms__part_d_spending_by_drug`. `drug_key` is a surrogate
-      hash of that pair and is the join key exposed on both spend
-      facts (`fct_part_b_drug_spending.drug_key`,
-      `fct_part_d_drug_spending.drug_key`).
+      hash of that pair and is the join key exposed on the
+      drug-grain facts (`fct_part_b_drug_spending.drug_key`,
+      `fct_part_d_drug_spending.drug_key`,
+      `fct_prescriber_drug_spending.drug_key`).
 
       Conformance is **exact-name matching only**: names are trimmed
       (with empty strings nulled) in staging, upper-cased here, and
