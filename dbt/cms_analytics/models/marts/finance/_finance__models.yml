@@ -37,17 +37,18 @@ models:
           CMS Certification Number. Primary key — one row per
           hospital. Foreign key to `dim_hospital`, but the utilization
           files' provider universe is broader than Care Compare's:
-          120 CCNs here (53 in the inpatient file, 67 outpatient-only)
-          are retired identifiers with no `dim_hospital` row — the
-          claims snapshot still lists hospitals that have since closed
-          or re-certified under a new CCN (e.g. acute-to-critical-
+          roughly 120-130 CCNs per vintage (129 in the 2026-07 build:
+          62 in the inpatient file, 67 outpatient-only) are retired
+          identifiers with no `dim_hospital` row — the claims
+          snapshot still lists hospitals that have since closed or
+          re-certified under a new CCN (e.g. acute-to-critical-
           access conversions like Crenshaw Community Hospital, claims
           `010008` vs Care Compare `011308`). This is a population
           gap, not a key-format mismatch: both sides carry conformed
           six-character CCNs, and no normalization of the 164 `F`-
           suffixed VA/DoD CCNs in `dim_hospital` (federal facilities
           that never bill Medicare fee-for-service) reconciles any of
-          the 120.
+          them.
         data_tests:
           - not_null
           - unique
@@ -60,8 +61,8 @@ models:
                 # — compare this fact's `as_of` against
                 # `dim_hospital.as_of` to spot the skew; a name-based
                 # CCN crosswalk is infeasible today — only ~30 of the
-                # 120 retired CCNs name-match a current Care Compare
-                # row
+                # ~120-130 retired CCNs name-match a current Care
+                # Compare row
                 severity: warn
       - name: inpatient_total_beneficiaries
         description: |
