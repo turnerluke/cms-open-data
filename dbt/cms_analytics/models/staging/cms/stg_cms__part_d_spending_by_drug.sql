@@ -8,8 +8,8 @@ renamed as (
 
     select
         -- identifiers (one row per brand / generic / manufacturer)
-        trim(brnd_name) as brand_name,
-        trim(gnrc_name) as generic_name,
+        nullif(trim(brnd_name), '') as brand_name,
+        nullif(trim(gnrc_name), '') as generic_name,
         trim(mftr_name) as manufacturer_name,
         try_cast(tot_mftr as int) as total_manufacturers,
 

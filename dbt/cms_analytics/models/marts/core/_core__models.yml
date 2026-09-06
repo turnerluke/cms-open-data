@@ -58,6 +58,72 @@ models:
         data_tests:
           - not_null
 
+  - name: dim_drug
+    description: |
+      Conformed drug dimension bridging the Part B and Part D spend
+      facts. One row per distinct upper-cased (`brand_name`,
+      `generic_name`) pair, unioned across
+      `stg_cms__medicare_part_b_spending_by_drug` and
+      `stg_cms__part_d_spending_by_drug`. `drug_key` is a surrogate
+      hash of that pair and is the join key exposed on both spend
+      facts (`fct_part_b_drug_spending.drug_key`,
+      `fct_part_d_drug_spending.drug_key`).
+
+      Conformance is **exact-name matching only**: names are trimmed
+      (with empty strings nulled) in staging, upper-cased here, and
+      compared literally — no
+      RxNorm mapping, ingredient normalization, or fuzzy matching.
+      `in_part_b and in_part_d` therefore only captures drugs whose
+      CMS names match exactly across the two program files; treat it
+      as a lower bound on true overlap, not a complete crosswalk
+      (Part B names can carry formatting the Part D file doesn't,
+      e.g. several brands listed on one HCPCS code). Part B rows
+      with no drug name at all (not-otherwise-classified codes) are
+      excluded.
+    columns:
+      - name: drug_key
+        description: |
+          Surrogate hash of the upper-cased brand and generic names.
+          Primary key — one row per name pair.
+        data_tests:
+          - not_null
+          - unique
+      - name: brand_name
+        description: |
+          Upper-cased brand name. `NULL` only for Part B codes that
+          publish a generic name without a brand.
+      - name: generic_name
+        description: |
+          Upper-cased generic name. `NULL` only for Part B codes that
+          publish a brand name without a generic.
+      - name: part_b_brand_name
+        description: |
+          Brand name as spelled in the Part B file; `NULL` when the
+          drug only appears in Part D. Case-only variants within the
+          source collapse to the first spelling by binary collation,
+          chosen per column — the as-seen brand/generic pair may
+          therefore combine spellings from different source rows.
+      - name: part_b_generic_name
+        description: |
+          Generic name as spelled in the Part B file; `NULL` when the
+          drug only appears in Part D.
+      - name: part_d_brand_name
+        description: |
+          Brand name as spelled in the Part D file; `NULL` when the
+          drug only appears in Part B.
+      - name: part_d_generic_name
+        description: |
+          Generic name as spelled in the Part D file; `NULL` when the
+          drug only appears in Part B.
+      - name: in_part_b
+        description: "`TRUE` when the name pair appears in the Part B file."
+        data_tests:
+          - not_null
+      - name: in_part_d
+        description: "`TRUE` when the name pair appears in the Part D file."
+        data_tests:
+          - not_null
+
   - name: dim_hospital
     description: |
       One row per Medicare-certified hospital, conformed from
