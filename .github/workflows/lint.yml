@@ -254,6 +254,7 @@ jobs:
             **.md
           files_ignore: |
             CHANGELOG.md
+            evidence/**
 
       - name: Set up Node.js
         if: steps.changed-files.outputs.any_changed == 'true'

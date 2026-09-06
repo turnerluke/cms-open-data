@@ -1,0 +1,7 @@
+name: cms
+type: duckdb
+options:
+  # Resolved relative to this directory (sources/cms/), so this points
+  # at <repo root>/data/warehouse.duckdb — build it first with the
+  # Dagster `full_refresh_job` (see the root README).
+  filename: ../../../data/warehouse.duckdb

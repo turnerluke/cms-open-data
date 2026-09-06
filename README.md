@@ -99,6 +99,23 @@ No credentials are required — every source is a public API.
 limits (see the [`cms_api` README](libs/cms_api/README.md) for all
 configuration knobs).
 
+## Dashboards
+
+[Evidence](https://evidence.dev) dashboards over the dbt marts live in
+`evidence/`. They read `data/warehouse.duckdb` directly, so build the
+warehouse first — either run the Dagster `full_refresh_job` (extracts
+every registry dataset, then runs dbt) or follow the Quickstart above —
+then start the dev server (requires Node 18+):
+
+```bash
+cd evidence
+npm install
+npm run dev
+```
+
+`npm run build` renders the same pages to a static site in
+`evidence/build/`.
+
 ## Repo layout
 
 | Path                                                        | What it is                                                  |
@@ -106,6 +123,7 @@ configuration knobs).
 | [`libs/cms_api/`](libs/cms_api/README.md)                   | Typed Python clients for CMS public APIs + dataset registry |
 | [`dagster/cms_pipelines/`](dagster/cms_pipelines/README.md) | Dagster orchestration — registry-generated assets           |
 | [`dbt/cms_analytics/`](dbt/cms_analytics/README.md)         | dbt models on DuckDB (staging → marts)                      |
+| `evidence/`                                                 | Evidence dashboards over the dbt marts                      |
 | [`docs/`](docs/)                                            | Docs and policies (testing standards, `typing.Any` ban)     |
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)                | How the repo is built — dev setup, agent tooling, standards |
 | `scripts/`                                                  | Maintenance tooling, incl. the dbt-sources generator        |

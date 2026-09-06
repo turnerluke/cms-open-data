@@ -4,6 +4,11 @@
 ---
 extends: default
 
+# Evidence config files follow Evidence's own conventions (no document
+# start marker, regenerated connection YAML), so they're not linted here
+ignore: |
+  evidence/
+
 rules:
   line-length:
     max: 128
