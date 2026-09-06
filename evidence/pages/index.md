@@ -13,6 +13,8 @@ with dbt on DuckDB from CMS public datasets.
   Part B vs Part D comparison for drugs billed in both programs.
 - [Hospital quality](/hospital-quality) — overall star ratings and
   healthcare-associated infection performance.
+- [Cost vs quality](/cost-vs-quality) — Medicare inpatient payment per
+  discharge by star rating, with case mix as the confounder.
 
 ## Warehouse coverage
 
@@ -36,6 +38,12 @@ select
     count(*),
     cast(count(distinct measure_id) as varchar) || ' measures'
 from cms.hospital_quality
+union all
+select
+    'fct_hospital_utilization',
+    count(*),
+    'latest vintage, no year column'
+from cms.hospital_utilization
 union all
 select
     'dim_hospital',
