@@ -162,8 +162,9 @@ limit 15
 ## Caveats
 
 - **Single snapshot, no trend.** The utilization mart is a single
-  latest-vintage snapshot with no year column, so nothing here is a
-  time series and figures can't be labeled with a year.
+  snapshot with no year column (its vintage is the mart's `as_of`
+  date), so nothing here is a time series and figures can't be
+  labeled with a claims year.
 - **Inpatient dollars only.** The mart's outpatient dollar columns are
   estimates (per-service average × service count) that **exclude
   outlier payments**, while inpatient totals include them — the two

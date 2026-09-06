@@ -1,0 +1,22 @@
+version: 2
+
+sources:
+  - name: cms_vintages
+    description: |
+      Dataset-vintage sidecars written by the Dagster extraction assets
+      (and backfillable via `python -m cms_pipelines.vintage_backfill`).
+      Each file under `data/raw/_vintages/` is a one-row Parquet naming
+      the upstream `modified` / `issued` / `released` / `temporal` dates
+      CMS published for a dataset at capture time; the glob unions them
+      into a single table. Hand-maintained (not registry-generated):
+      vintages describe extraction metadata, not a registry dataset, so
+      `scripts/gen_cms_sources.py` deliberately doesn't know about them.
+    meta:
+      external_location: "{{ env_var('CMS_RAW_ROOT', '../../data/raw') }}/_vintages/*.parquet"
+    tables:
+      - name: dataset_vintages
+        description: |
+          One row per extracted dataset: upstream publication dates plus
+          the local capture timestamp. `dataset_key` matches the
+          registry key in `libs/cms_api/datasets.toml` (no `cms_`
+          prefix).

@@ -1,7 +1,9 @@
 -- TODO: the prescriber source file is a single latest-vintage
 -- snapshot with no year column, so this fact has no spending_year.
--- Take the year from dataset-vintage tracking before moving to an
--- npi × drug × year grain.
+-- The snapshot vintage is now exposed as `as_of` (upstream `modified`
+-- date via stg_cms__dataset_vintages); moving to an npi × drug × year
+-- grain still needs the claims year, which the vintage alone doesn't
+-- give.
 
 with staged as (
 
@@ -34,7 +36,16 @@ final as (
         total_beneficiaries,
         total_drug_cost / nullif(total_claims, 0) as cost_per_claim,
         total_drug_cost / nullif(total_beneficiaries, 0) as cost_per_beneficiary,
-        total_drug_cost / nullif(total_day_supply, 0) as cost_per_day_supplied
+        total_drug_cost / nullif(total_day_supply, 0) as cost_per_day_supplied,
+
+        -- snapshot vintage: upstream `modified` date of the source
+        -- file. Scalar subquery so a missing sidecar surfaces as a
+        -- null (caught by the not_null test) instead of losing rows.
+        (
+            select vintages.modified
+            from {{ ref('stg_cms__dataset_vintages') }} as vintages
+            where vintages.dataset_key = 'medicare_part_d_prescribers_by_provider_and_drug'
+        ) as as_of
     from staged
 
 )

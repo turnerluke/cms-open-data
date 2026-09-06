@@ -13,8 +13,9 @@ models:
       Modeling choices to be aware of:
 
       - Both source files are single latest-vintage snapshots with no
-        year column, so the fact carries **no `spending_year`** — see
-        the `TODO` in the model about dataset-vintage tracking.
+        year column, so the fact carries **no `spending_year`**; the
+        snapshot vintage is exposed as `as_of` instead — see the
+        `TODO` in the model about the deferred `ccn` × year grain.
       - About 45% of outpatient `ccn` × `apc_code` rows are fully
         disclosure-suppressed (every measure `NULL`). Suppressed
         values are **excluded** from the outpatient sums, and a
@@ -55,10 +56,12 @@ models:
                 to: ref('dim_hospital')
                 field: ccn
               config:
-                # TODO: promote to error once vintage tracking aligns
-                # the two snapshots; a name-based CCN crosswalk is
-                # infeasible today — only ~30 of the 120 retired CCNs
-                # name-match a current Care Compare row
+                # TODO: promote to error once the two snapshots align
+                # — compare this fact's `as_of` against
+                # `dim_hospital.as_of` to spot the skew; a name-based
+                # CCN crosswalk is infeasible today — only ~30 of the
+                # 120 retired CCNs name-match a current Care Compare
+                # row
                 severity: warn
       - name: inpatient_total_beneficiaries
         description: |
@@ -199,6 +202,13 @@ models:
           services-weighted average Medicare payment per outpatient
           service, excluding outlier payments. `NULL` when the
           hospital's outpatient rows are all suppressed.
+      - name: as_of
+        description: |
+          Snapshot vintage: the fresher of the two source files'
+          upstream `modified` dates at capture time (from
+          `stg_cms__dataset_vintages`). Constant across rows.
+        data_tests:
+          - not_null
 
   - name: fct_part_b_drug_spending
     description: |
@@ -347,8 +357,9 @@ models:
 
       - The source file is a single latest-vintage snapshot (data
         year 2024) with no year column, so the fact carries **no
-        `spending_year`** — see the `TODO` in the model about
-        dataset-vintage tracking.
+        `spending_year`**; the snapshot vintage is exposed as `as_of`
+        instead — see the `TODO` in the model about the deferred
+        `npi` × drug × year grain.
       - CMS drops prescriber-drug rows with 10 or fewer claims from
         the file entirely and suppresses `total_beneficiaries` below
         11, so `cost_per_beneficiary` is `NULL` on suppressed rows.
@@ -454,6 +465,13 @@ models:
         description: |
           `total_drug_cost / total_day_supply` — the least
           fill-mix-sensitive unit cost.
+      - name: as_of
+        description: |
+          Snapshot vintage: the upstream `modified` date CMS reported
+          for the prescriber file at capture time (from
+          `stg_cms__dataset_vintages`). Constant across rows.
+        data_tests:
+          - not_null
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:

@@ -7,9 +7,13 @@ providers (`enumeration_type='NPI-2'`). Each state stays well under the cap
 for most jurisdictions; this is not exhaustive coverage.
 """
 
-from cms_api import NppesProvider, search_providers
+from pathlib import Path
+
+from cms_api import NppesProvider, local_vintage, search_providers
 import pyarrow as pa
 
+from cms_pipelines.defs.cms.vintage_sidecar import write_vintage_sidecar
+from cms_pipelines.defs.resources import resolve_raw_root
 from dagster import AssetExecutionContext, Config, asset
 
 
@@ -56,4 +60,14 @@ def cms_nppes_providers(
     if not providers:
         msg = "NPPES sweep returned zero providers; refusing to land empty Parquet"
         raise RuntimeError(msg)
+    # NPPES is a live registry sweep, not a published snapshot, so its
+    # vintage is capture-time only (no upstream modified/temporal dates).
+    # The sidecar lands before the IO manager persists the table, so a
+    # failed persist leaves a fresh sidecar beside stale data. TODO:
+    # write it post-persist like bulk_csv_assets/qhp_zip_assets do
+    write_vintage_sidecar(
+        Path(resolve_raw_root()),
+        "cms_nppes_providers",
+        local_vintage("nppes_providers", "nppes"),
+    )
     return pa.Table.from_pylist([p.model_dump(mode="json") for p in providers])
