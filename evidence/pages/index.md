@@ -15,6 +15,8 @@ with dbt on DuckDB from CMS public datasets.
   healthcare-associated infection performance.
 - [Cost vs quality](/cost-vs-quality) — Medicare inpatient payment per
   discharge by star rating, with case mix as the confounder.
+- [Prescribers](/prescribers) — who drives spending on the top Part D
+  drugs: specialties, top-1% concentration, and billed-vs-gross cost.
 
 ## Warehouse coverage
 
@@ -44,6 +46,12 @@ select
     count(*),
     'latest vintage, no year column'
 from cms.hospital_utilization
+union all
+select
+    'fct_prescriber_drug_spending',
+    total_rows,
+    'latest vintage, no year column'
+from cms.prescriber_stats
 union all
 select
     'dim_hospital',
