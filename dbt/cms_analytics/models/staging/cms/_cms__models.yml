@@ -137,6 +137,169 @@ models:
       - name: generic_name
         description: "Drug generic name (trimmed `Gnrc_Name`; empty strings become `NULL`)."
 
+  - name: stg_cms__medicare_inpatient_hospitals_by_provider
+    description: |
+      Medicare Inpatient Hospitals — by Provider (CMS data-api/v1
+      dataset `ee6fb1a5-39b9-46b3-a980-a7284551a732`). One row per
+      hospital summarizing inpatient utilization, payments,
+      beneficiary demographics, and chronic-condition prevalence.
+      The bulk CSV covers the latest published data year only and
+      carries no year column, so any hospital-year grain must take
+      the year from the dataset vintage, not from a column. Staging
+      renames the abbreviated CMS columns (`Tot_Dschrgs` →
+      `total_discharges`, `Bene_CC_PH_COPD_V2_Pct` →
+      `pct_beneficiaries_copd`, etc.); numerics already arrive typed
+      from the parquet, so no casts are needed. Grain: `ccn`. Feeds
+      the future `fct_hospital_utilization` mart, joining
+      `dim_hospital` on `ccn`.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number (raw `Rndrng_Prvdr_CCN`), kept as
+          zero-padded six-character text to match
+          `dim_hospital.ccn`. Primary key — one row per hospital.
+        data_tests:
+          - not_null
+          - unique
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{6}$'
+      - name: provider_name
+        description: "Hospital name (trimmed `Rndrng_Prvdr_Org_Name`)."
+      - name: state_fips
+        description: |
+          Two-digit state FIPS code, kept as a string to preserve
+          leading zeros (raw `Rndrng_Prvdr_State_FIPS`).
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros (raw `Rndrng_Prvdr_Zip5`).
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{5}$'
+      - name: ruca_code
+        description: |
+          Rural-Urban Commuting Area code of the hospital ZIP (raw
+          `Rndrng_Prvdr_RUCA`); decimal subcodes like `4.1` are
+          meaningful, so it stays numeric.
+      - name: total_beneficiaries
+        description: "Distinct Medicare beneficiaries with an inpatient stay."
+        data_tests:
+          - not_null
+      - name: total_discharges
+        description: "Inpatient discharges billed by the hospital."
+        data_tests:
+          - not_null
+      - name: total_covered_days
+        description: |
+          Medicare-covered inpatient days. Never exceeds
+          `total_days` — enforced by the model-level
+          `dbt_utils.expression_is_true` test.
+      - name: total_days
+        description: "Total inpatient days including non-covered days."
+      - name: avg_hcc_risk_score
+        description: |
+          Average CMS-HCC risk score of the hospital's inpatient
+          beneficiaries (raw `Bene_Avg_Risk_Scre`).
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              total_covered_days <= total_days
+              or total_covered_days is null
+              or total_days is null
+
+  - name: stg_cms__medicare_outpatient_hospitals_by_provider_and_service
+    description: |
+      Medicare Outpatient Hospitals — by Provider and Service (CMS
+      data-api/v1 dataset `ccbc9a44-40d4-46b4-a709-5caa59212e50`).
+      One row per hospital per Ambulatory Payment Classification
+      (APC) with comprehensive-APC service counts and average
+      charge/payment amounts. The bulk CSV covers the latest
+      published data year only and carries no year column, so any
+      hospital-year grain must take the year from the dataset
+      vintage. CMS withholds measures below its disclosure
+      threshold: about 45% of rows carry identifiers only (every
+      measure column `NULL`), and `beneficiary_count` and the
+      outlier columns are suppressed on further rows besides — so
+      consumers must handle `NULL` explicitly.
+      Staging renames the abbreviated CMS columns and casts
+      `APC_Cd` (sniffed as an integer by CSV ingestion) to
+      zero-padded four-digit text. Grain: (`ccn`,
+      `apc_code`). Feeds the future `fct_hospital_utilization`
+      mart, joining `dim_hospital` on `ccn`.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number (raw `Rndrng_Prvdr_CCN`), kept as
+          zero-padded six-character text to match
+          `dim_hospital.ccn`.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{6}$'
+      - name: apc_code
+        description: |
+          Ambulatory Payment Classification code (raw `APC_Cd`),
+          cast to zero-padded four-digit text (current codes are
+          all four digits already; the pad guards shorter ones).
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{4}$'
+      - name: apc_description
+        description: "APC description (trimmed `APC_Desc`)."
+      - name: provider_name
+        description: "Hospital name (trimmed `Rndrng_Prvdr_Org_Name`)."
+      - name: state_fips
+        description: |
+          Two-digit state FIPS code, kept as a string to preserve
+          leading zeros (raw `Rndrng_Prvdr_State_FIPS`).
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros (raw `Rndrng_Prvdr_Zip5`).
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{5}$'
+      - name: beneficiary_count
+        description: |
+          Distinct beneficiaries receiving the APC service; `NULL`
+          when CMS suppresses the count as below its disclosure
+          threshold (including on fully suppressed rows).
+      - name: comprehensive_apc_service_count
+        description: |
+          Comprehensive APC services billed (raw `CAPC_Srvcs`);
+          `NULL` on fully suppressed rows. At least
+          `beneficiary_count` where both are present — enforced by
+          the model-level `dbt_utils.expression_is_true` test.
+      - name: outlier_service_count
+        description: |
+          Services paid with an outlier adjustment (raw
+          `Outlier_Srvcs`); `NULL` on suppressed rows.
+      - name: avg_medicare_outlier_amount
+        description: |
+          Average Medicare outlier-adjustment payment per outlier
+          service; `NULL` on suppressed rows.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ccn
+              - apc_code
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              comprehensive_apc_service_count >= beneficiary_count
+              or comprehensive_apc_service_count is null
+              or beneficiary_count is null
+
   - name: stg_cms__hospital_complications_deaths
     description: |
       Complications and Deaths — Hospital level, from CMS Care
