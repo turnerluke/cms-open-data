@@ -96,3 +96,4 @@ dbt/cms_analytics/target/
 dbt/cms_analytics/dbt_packages/
 dbt/cms_analytics/logs/
 dbt/cms_analytics/.user.yml
+dbt/cms_analytics/package-lock.concurrent-update-lock
