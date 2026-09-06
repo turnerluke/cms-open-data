@@ -1,6 +1,198 @@
 version: 2
 
 models:
+  - name: fct_hospital_utilization
+    description: |
+      Medicare fee-for-service hospital utilization and payments, one
+      row per hospital. Grain: `ccn`. Inpatient measures pass through
+      from the per-provider inpatient file; outpatient measures are
+      rolled up from the per-provider-and-APC outpatient file via a
+      full outer join, so a hospital appearing in either file alone is
+      kept (3,044 inpatient CCNs plus 172 outpatient-only CCNs).
+
+      Modeling choices to be aware of:
+
+      - Both source files are single latest-vintage snapshots with no
+        year column, so the fact carries **no `spending_year`** — see
+        the `TODO` in the model about dataset-vintage tracking.
+      - About 45% of outpatient `ccn` × `apc_code` rows are fully
+        disclosure-suppressed (every measure `NULL`). Suppressed
+        values are **excluded** from the outpatient sums, and a
+        hospital whose outpatient rows are all suppressed (133 CCNs)
+        keeps `NULL` outpatient totals rather than 0. Nothing is
+        coalesced to 0. `outpatient_suppressed_apc_count` reports how
+        many of a hospital's APCs were suppressed.
+      - The outpatient source publishes per-service **averages**, not
+        totals, so the `outpatient_estimated_*` dollar columns are
+        reconstructed as average × service count summed over
+        disclosed rows.
+      - Hospital name/address attributes are not inlined; join
+        `dim_hospital` on `ccn` for them. Inpatient beneficiary
+        demographics and chronic-condition prevalence stay in
+        `stg_cms__medicare_inpatient_hospitals_by_provider`.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number. Primary key — one row per
+          hospital. Foreign key to `dim_hospital`, but the utilization
+          files' provider universe is broader than Care Compare's:
+          some CCNs here are legitimately absent from `dim_hospital`,
+          and some `dim_hospital` CCNs carry an `F` suffix this file
+          never uses.
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('dim_hospital')
+                field: ccn
+              config:
+                # TODO: promote to error once CCN-universe alignment
+                # between the utilization files and dim_hospital is
+                # resolved (120 CCNs warn today: 53 from the inpatient
+                # file plus 67 outpatient-only, all legitimately absent
+                # from dim_hospital; 164 dim CCNs carry an `F` suffix)
+                severity: warn
+      - name: inpatient_total_beneficiaries
+        description: |
+          Distinct beneficiaries with an inpatient stay at the
+          hospital. `NULL` when the hospital is absent from the
+          inpatient file.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: inpatient_total_discharges
+        description: "Total inpatient discharges."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: inpatient_total_covered_days
+        description: "Total Medicare-covered inpatient days."
+      - name: inpatient_total_days
+        description: "Total inpatient days, covered or not."
+      - name: inpatient_total_submitted_covered_charges
+        description: "Total charges submitted for covered services, in dollars."
+      - name: inpatient_total_payment_amount
+        description: |
+          Total payments to the hospital for inpatient stays from all
+          sources (Medicare, beneficiary, third parties), in dollars.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: inpatient_total_medicare_payment_amount
+        description: "Total Medicare payments for inpatient stays, in dollars."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: inpatient_avg_hcc_risk_score
+        description: |
+          Average HCC risk score of the hospital's **inpatient**
+          beneficiary population; higher means sicker expected
+          patients. Prefixed because it describes only the inpatient
+          file's population, not the whole hospital.
+      - name: outpatient_apc_count
+        description: |
+          Distinct APCs (Ambulatory Payment Classifications) the
+          hospital billed — service-line breadth. Includes suppressed
+          APC rows: suppression hides volumes, not the existence of
+          the service line. `NULL` when the hospital is absent from
+          the outpatient file.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: outpatient_suppressed_apc_count
+        description: |
+          How many of the hospital's APC rows were fully
+          disclosure-suppressed (all measures `NULL`). Equal to
+          `outpatient_apc_count` for the 133 hospitals whose
+          outpatient totals are entirely `NULL`.
+      - name: outpatient_total_beneficiaries
+        description: |
+          Sum of per-APC beneficiary counts over disclosed rows. A
+          beneficiary treated under several APCs is counted once per
+          APC, so this overstates distinct outpatients. Also excludes
+          the ~2% of disclosed rows where services are disclosed but
+          the beneficiary count alone is suppressed.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: outpatient_total_services
+        description: |
+          Total comprehensive-APC services across disclosed APC rows.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: outpatient_total_outlier_services
+        description: |
+          Total services paid with a cost outlier adjustment. The
+          source leaves outlier fields `NULL` on some otherwise
+          disclosed rows, so this can undercount.
+      - name: outpatient_estimated_submitted_charges
+        description: |
+          Estimated total submitted charges over disclosed APC rows:
+          sum of per-APC average charge × service count, in dollars.
+      - name: outpatient_estimated_medicare_allowed_amount
+        description: |
+          Estimated total Medicare-allowed amount over disclosed APC
+          rows (average × service count), in dollars. The source
+          averages exclude outlier payments, so this excludes them
+          too — see `outpatient_estimated_medicare_outlier_amount`.
+      - name: outpatient_estimated_medicare_payment_amount
+        description: |
+          Estimated total Medicare payment over disclosed APC rows
+          (average × service count), in dollars. Excludes outlier
+          payments (the source averages exclude them; add
+          `outpatient_estimated_medicare_outlier_amount` for the
+          full amount). Not directly comparable to
+          `inpatient_total_medicare_payment_amount`, which does
+          include outlier payments.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: outpatient_estimated_medicare_outlier_amount
+        description: |
+          Estimated total Medicare outlier payments (average outlier
+          payment × outlier service count), in dollars.
+      - name: inpatient_medicare_payment_per_discharge
+        description: |
+          `inpatient_total_medicare_payment_amount /
+          inpatient_total_discharges`. `NULL` when either input is
+          `NULL` or discharges are 0.
+      - name: inpatient_payment_per_discharge
+        description: |
+          `inpatient_total_payment_amount /
+          inpatient_total_discharges` — all-payer payment per
+          discharge. `NULL` when either input is `NULL` or discharges
+          are 0.
+      - name: inpatient_avg_length_of_stay
+        description: |
+          `inpatient_total_days / inpatient_total_discharges`, in
+          days. `NULL` when either input is `NULL` or discharges are
+          0.
+      - name: outpatient_medicare_payment_per_service
+        description: |
+          `outpatient_estimated_medicare_payment_amount /
+          outpatient_total_services` — the hospital's
+          services-weighted average Medicare payment per outpatient
+          service, excluding outlier payments. `NULL` when the
+          hospital's outpatient rows are all suppressed.
+
   - name: fct_part_b_drug_spending
     description: |
       Medicare Part B drug spending, unpivoted from the wide-by-year
