@@ -7,6 +7,7 @@ select
     cast(count(case when f.total_beneficiaries is null then 1 end) as double)
         / count(*) as suppressed_beneficiary_share,
     cast(count(case when d.drug_key is null then 1 end) as double)
-        / count(*) as dim_drug_orphan_share
+        / count(*) as dim_drug_orphan_share,
+    max(f.as_of) as as_of
 from main_marts.fct_prescriber_drug_spending as f
 left join main_marts.dim_drug as d using (drug_key)

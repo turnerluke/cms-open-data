@@ -261,8 +261,9 @@ order by prescriber_billed_cost desc
 ## Caveats
 
 - **Single snapshot, no trend.** The prescriber mart is a single
-  latest-vintage snapshot (calendar-2024 claims) with no year column,
-  so nothing on this page is a time series.
+  snapshot (calendar-2024 claims, vintage in the mart's `as_of`
+  column) with no year column, so nothing on this page is a time
+  series.
 - **Small rows are suppressed entirely.** CMS removes prescriber-drug
   rows with fewer than 11 claims, so every row here has ≥ 11 claims,
   totals **undercount** true spending, and low-volume prescribers are

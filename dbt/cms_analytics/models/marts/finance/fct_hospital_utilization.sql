@@ -1,7 +1,8 @@
 -- TODO: the two utilization source files are single latest-vintage
 -- snapshots with no year column, so this fact has no spending_year.
--- Take the year from dataset-vintage tracking before moving to a
--- ccn × year grain.
+-- The snapshot vintage is now exposed as `as_of` (upstream `modified`
+-- dates via stg_cms__dataset_vintages); moving to a ccn × year grain
+-- still needs the claims year, which the vintage alone doesn't give.
 
 with inpatient as (
 
@@ -76,7 +77,23 @@ final as (
             as inpatient_avg_length_of_stay,
         outpatient.outpatient_estimated_medicare_payment_amount
         / nullif(outpatient.outpatient_total_services, 0)
-            as outpatient_medicare_payment_per_service
+            as outpatient_medicare_payment_per_service,
+
+        -- snapshot vintage: the fresher upstream `modified` of the two
+        -- source files (greatest() ignores nulls in DuckDB, so one
+        -- missing sidecar still yields the other's date)
+        greatest(
+            (
+                select vintages.modified
+                from {{ ref('stg_cms__dataset_vintages') }} as vintages
+                where vintages.dataset_key = 'medicare_inpatient_hospitals_by_provider'
+            ),
+            (
+                select vintages.modified
+                from {{ ref('stg_cms__dataset_vintages') }} as vintages
+                where vintages.dataset_key = 'medicare_outpatient_hospitals_by_provider_and_service'
+            )
+        ) as as_of
     from inpatient
     full outer join outpatient on inpatient.ccn = outpatient.ccn
 

@@ -44,13 +44,13 @@ union all
 select
     'fct_hospital_utilization',
     count(*),
-    'latest vintage, no year column'
+    'snapshot as of ' || cast(max(as_of) as varchar)
 from cms.hospital_utilization
 union all
 select
     'fct_prescriber_drug_spending',
     total_rows,
-    'latest vintage, no year column'
+    'snapshot as of ' || cast(as_of as varchar)
 from cms.prescriber_stats
 union all
 select

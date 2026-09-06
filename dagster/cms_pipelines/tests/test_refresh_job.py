@@ -29,12 +29,19 @@ def test_full_refresh_job_resolves() -> None:
 
 
 def test_full_refresh_job_covers_extraction_and_dbt_assets() -> None:
-    """`AssetSelection.all()` picks up both extraction assets and dbt models."""
+    """`AssetSelection.all()` picks up both extraction assets and dbt models.
+
+    The only asset key outside the job selection is the
+    `dataset_vintages` external spec: the vintage sidecars are written
+    as a side effect of every extraction asset, so the dbt source has
+    no single producing asset to select.
+    """
     definitions = defs()
     selected = _selected_keys(definitions)
 
     all_keys = {key.to_user_string() for key in definitions.resolve_asset_graph().get_all_asset_keys()}
-    assert selected == all_keys
+    assert all_keys - selected == {"dataset_vintages"}
+    assert selected <= all_keys
 
     extraction = {key for key in selected if key.startswith("cms_")}
     dbt_models = {key for key in selected if "/" in key}
@@ -74,10 +81,13 @@ def test_dbt_source_tables_match_extraction_assets() -> None:
         (Path(__file__).resolve().parents[3] / "dbt" / "cms_analytics" / "target" / "manifest.json").read_text()
     )
     source_tables = {node["name"] for node in manifest["sources"].values()}
+    # the vintage-sidecar source is written by every extraction asset,
+    # so it deliberately has no same-named asset (see `defs.yaml`)
+    assert "dataset_vintages" in source_tables
 
     graph = defs().resolve_asset_graph()
     extraction = {key.to_user_string() for key in graph.get_all_asset_keys() if key.to_user_string().startswith("cms_")}
-    assert source_tables == extraction
+    assert source_tables - {"dataset_vintages"} == extraction
 
 
 def test_full_refresh_schedule_targets_job_weekly() -> None:

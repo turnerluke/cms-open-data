@@ -15,7 +15,15 @@ with hcahps as (
         number_of_completed_surveys as denominator,
         cast(null as varchar) as compared_to_national,
         start_date,
-        end_date
+        end_date,
+        -- per-domain snapshot vintage: upstream `modified` date of
+        -- each source file, kept as the last column in every branch so
+        -- the union stays positionally aligned
+        (
+            select vintages.modified
+            from {{ ref('stg_cms__dataset_vintages') }} as vintages
+            where vintages.dataset_key = 'hospital_hcahps'
+        ) as as_of
     from {{ ref('stg_cms__hospital_hcahps') }}
 
 ),
@@ -31,7 +39,12 @@ complications_deaths as (
         denominator,
         compared_to_national,
         start_date,
-        end_date
+        end_date,
+        (
+            select vintages.modified
+            from {{ ref('stg_cms__dataset_vintages') }} as vintages
+            where vintages.dataset_key = 'hospital_complications_deaths'
+        ) as as_of
     from {{ ref('stg_cms__hospital_complications_deaths') }}
 
 ),
@@ -49,7 +62,12 @@ infections as (
         cast(null as int) as denominator,
         compared_to_national,
         start_date,
-        end_date
+        end_date,
+        (
+            select vintages.modified
+            from {{ ref('stg_cms__dataset_vintages') }} as vintages
+            where vintages.dataset_key = 'hospital_associated_infections'
+        ) as as_of
     from {{ ref('stg_cms__hospital_associated_infections') }}
 
 ),
@@ -65,7 +83,12 @@ unplanned_visits as (
         denominator,
         compared_to_national,
         start_date,
-        end_date
+        end_date,
+        (
+            select vintages.modified
+            from {{ ref('stg_cms__dataset_vintages') }} as vintages
+            where vintages.dataset_key = 'hospital_unplanned_visits'
+        ) as as_of
     from {{ ref('stg_cms__hospital_unplanned_visits') }}
 
 ),

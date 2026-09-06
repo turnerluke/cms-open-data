@@ -32,6 +32,7 @@ from cms_api import (
 )
 import duckdb
 
+from cms_pipelines.defs.cms.vintage_sidecar import capture_dataset_vintage
 from cms_pipelines.defs.io_managers.parquet import publish_parquet, staged_write
 from cms_pipelines.defs.resources import resolve_raw_root
 from dagster import AssetExecutionContext, AssetsDefinition, MaterializeResult, MetadataValue, asset
@@ -113,11 +114,13 @@ def _build_asset(spec: DatasetSpec) -> AssetsDefinition:
                 msg = f"{asset_name} produced zero rows; refusing to land empty Parquet"
                 raise RuntimeError(msg)
             out_path = publish_parquet(staged)
+        vintage_path = capture_dataset_vintage(spec, raw_root=Path(resolve_raw_root()), asset_name=asset_name)
         return MaterializeResult(
             metadata={
                 "path": MetadataValue.path(str(out_path)),
                 "row_count": MetadataValue.int(row_count),
                 "csv_url": MetadataValue.url(csv_url),
+                "vintage_path": MetadataValue.path(str(vintage_path)),
             },
         )
 

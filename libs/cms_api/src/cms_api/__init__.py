@@ -14,6 +14,7 @@ from .healthcare_gov import Article, GlossaryTerm, get_articles, get_glossary, g
 from .nppes import NppesAddress, NppesBasic, NppesProvider, NppesTaxonomy, get_provider_by_npi, search_providers
 from .registry import DatasetSpec, load_registry
 from .socrata import CMS_DOMAIN, MEDICAID_DOMAIN, iter_dataset
+from .vintage import DatasetVintage, fetch_dataset_vintage, local_vintage
 
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "OPEN_PAYMENTS_BASE_URL",
     "Article",
     "DatasetSpec",
+    "DatasetVintage",
     "GlossaryTerm",
     "JsonObject",
     "JsonValue",
@@ -31,6 +33,7 @@ __all__ = [
     "NppesBasic",
     "NppesProvider",
     "NppesTaxonomy",
+    "fetch_dataset_vintage",
     "get_articles",
     "get_data_api_csv_url",
     "get_dkan_dataset_csv_url",
@@ -41,5 +44,6 @@ __all__ = [
     "iter_dataset",
     "iter_provider_data_catalog",
     "load_registry",
+    "local_vintage",
     "search_providers",
 ]

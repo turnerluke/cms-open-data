@@ -52,10 +52,11 @@ models:
                 to: ref('dim_hospital')
                 field: ccn
               config:
-                # TODO: promote to error once vintage tracking aligns
-                # the five Care Compare snapshots; a manual crosswalk
-                # cannot close this — only 4 of the 10 orphan CCNs
-                # have a predecessor dim row to map onto
+                # TODO: promote to error once the five Care Compare
+                # snapshots align — compare `as_of` across domains
+                # against `dim_hospital.as_of` to spot the skew; a
+                # manual crosswalk cannot close this — only 4 of the
+                # 10 orphan CCNs have a predecessor dim row to map onto
                 severity: warn
       - name: measure_domain
         description: |
@@ -115,6 +116,16 @@ models:
         description: "First day of the measurement period."
       - name: end_date
         description: "Last day of the measurement period."
+      - name: as_of
+        description: |
+          Snapshot vintage of the row's source dataset: the upstream
+          `modified` date CMS reported for that measure domain's file
+          at capture time (from `stg_cms__dataset_vintages`). May vary
+          by `measure_domain` — the four Care Compare files are not
+          republished in lockstep (in the current vintage all four
+          happen to share one date).
+        data_tests:
+          - not_null
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:

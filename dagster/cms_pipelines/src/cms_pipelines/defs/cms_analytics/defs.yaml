@@ -7,5 +7,9 @@ attributes:
   # extraction assets in the asset graph. Without this, sources resolve
   # to detached `cms_raw/<table>` external specs and a full-pipeline job
   # can't order extraction before dbt. Model keys pass through unchanged.
+  # The `cms_vintages.dataset_vintages` source maps to a detached
+  # `dataset_vintages` external spec on purpose: its sidecar files are
+  # written as a side effect of *every* extraction asset, so there is no
+  # single producer to attach it to (see `test_refresh_job.py`).
   translation:
     key: "{{ node.name if node.resource_type == 'source' else spec.key.to_user_string() }}"

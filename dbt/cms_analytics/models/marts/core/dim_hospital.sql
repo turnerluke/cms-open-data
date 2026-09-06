@@ -26,7 +26,16 @@ final as (
         meets_birthing_friendly_criteria,
 
         -- quality
-        hospital_overall_rating
+        hospital_overall_rating,
+
+        -- snapshot vintage: upstream `modified` date of the source
+        -- file. Scalar subquery so a missing sidecar surfaces as a
+        -- null (caught by the not_null test) instead of losing rows.
+        (
+            select vintages.modified
+            from {{ ref('stg_cms__dataset_vintages') }} as vintages
+            where vintages.dataset_key = 'hospital_general_information'
+        ) as as_of
     from staged
 
 )

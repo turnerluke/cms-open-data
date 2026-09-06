@@ -190,3 +190,11 @@ models:
                 min_value: 1
                 max_value: 5
                 inclusive: true
+      - name: as_of
+        description: |
+          Snapshot vintage: the upstream `modified` date CMS reported
+          for the Hospital General Information file at capture time
+          (from `stg_cms__dataset_vintages`). Constant across rows —
+          the whole dimension comes from one snapshot.
+        data_tests:
+          - not_null

@@ -12,11 +12,14 @@ asset shows up here automatically; no new module needed.
 """
 
 from collections.abc import Callable
+from pathlib import Path
 
 from cms_api import DatasetSpec, JsonObject, iter_dataset, iter_provider_data_catalog, load_registry
 from cms_api.healthcare_gov import get_static_json
 import pyarrow as pa
 
+from cms_pipelines.defs.cms.vintage_sidecar import capture_dataset_vintage
+from cms_pipelines.defs.resources import resolve_raw_root
 from dagster import AssetExecutionContext, AssetsDefinition, asset
 
 
@@ -74,6 +77,12 @@ def _build_asset(spec: DatasetSpec) -> AssetsDefinition:
             msg = f"{asset_name} returned zero rows; refusing to land empty Parquet"
             raise RuntimeError(msg)
         context.log.info("Fetched %d rows for %s", len(rows), asset_name)
+        # The sidecar lands before the IO manager persists the
+        # table, so a failed persist leaves a fresh sidecar beside
+        # stale data. TODO: write it post-persist like
+        # bulk_csv_assets and qhp_zip_assets do
+        vintage_path = capture_dataset_vintage(spec, raw_root=Path(resolve_raw_root()), asset_name=asset_name)
+        context.log.info("Wrote vintage sidecar %s", vintage_path)
         return pa.Table.from_pylist(rows)
 
     return _generated
