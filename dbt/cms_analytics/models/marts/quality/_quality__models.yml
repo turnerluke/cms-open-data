@@ -33,8 +33,18 @@ models:
         description: |
           CMS Certification Number (staging `facility_id`). Foreign
           key to `dim_hospital`. All five Care Compare datasets come
-          from the same DKAN provider-data catalog, so the facility
-          universe should match `dim_hospital`.
+          from the same DKAN provider-data catalog, but their
+          snapshots are not perfectly synchronized: 10 CCNs
+          (1,380 rows — 680 `hcahps`, 360 `infections`, 200
+          `complications_deaths`, 140 `unplanned_visits`) appear in
+          the measure snapshots but not the general-information
+          snapshot. Four have an identifiable predecessor row under a
+          prior CCN (e.g. Lakeland Community Hospital: measures
+          `011311` vs `dim_hospital` `010125`), five belong to
+          hospitals absent from the snapshot under any name, and one
+          is ambiguous. This is snapshot population/vintage skew, not
+          a key-format mismatch — both sides carry conformed
+          six-character CCNs.
         data_tests:
           - not_null
           - relationships:
@@ -42,9 +52,10 @@ models:
                 to: ref('dim_hospital')
                 field: ccn
               config:
-                # TODO: promote to error once a full raw-data build
-                # confirms the measure snapshots share dim_hospital's
-                # CCN universe
+                # TODO: promote to error once vintage tracking aligns
+                # the five Care Compare snapshots; a manual crosswalk
+                # cannot close this — only 4 of the 10 orphan CCNs
+                # have a predecessor dim row to map onto
                 severity: warn
       - name: measure_domain
         description: |

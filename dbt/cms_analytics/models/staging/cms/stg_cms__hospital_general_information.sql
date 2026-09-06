@@ -8,7 +8,17 @@ renamed as (
 
     select
         -- identifiers
-        facility_id,
+        -- CCN join key, conformed as upper(trim()) in every staging
+        -- model that carries one so facts and dims join on identical
+        -- keys. 164 rows are VA / Department of Defense facilities
+        -- whose CCN is five digits plus an `F` marker (e.g. `01014F`).
+        -- The suffix is kept verbatim: it is part of the federal
+        -- facility's identifier (stripping it would leave a five-char
+        -- key that matches nothing), no plain-numeric twin of any
+        -- `F` CCN exists in this file, and federal facilities do not
+        -- bill Medicare fee-for-service, so the claims facts never
+        -- reference them.
+        upper(trim(facility_id)) as facility_id,
         trim(facility_name) as facility_name,
 
         -- address

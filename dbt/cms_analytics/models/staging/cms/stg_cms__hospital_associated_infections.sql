@@ -8,7 +8,9 @@ renamed as (
 
     select
         -- identifiers
-        facility_id,
+        -- CCN join key, conformed as in
+        -- stg_cms__hospital_general_information
+        upper(trim(facility_id)) as facility_id,
         trim(facility_name) as facility_name,
 
         -- address

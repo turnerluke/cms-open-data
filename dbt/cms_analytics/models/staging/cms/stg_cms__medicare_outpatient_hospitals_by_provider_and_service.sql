@@ -8,7 +8,9 @@ renamed as (
 
     select
         -- identifiers (one row per hospital CCN per APC)
-        trim(rndrng_prvdr_ccn) as ccn,
+        -- CCN join key, conformed as in
+        -- stg_cms__hospital_general_information
+        upper(trim(rndrng_prvdr_ccn)) as ccn,
         lpad(cast(apc_cd as varchar), 4, '0') as apc_code,
         trim(apc_desc) as apc_description,
         trim(rndrng_prvdr_org_name) as provider_name,
