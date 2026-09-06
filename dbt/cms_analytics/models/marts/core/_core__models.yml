@@ -142,7 +142,10 @@ models:
       - name: ccn
         description: |
           CMS Certification Number (staging `facility_id`). Primary
-          key — one row per hospital.
+          key — one row per hospital. 164 VA/DoD facilities carry a
+          five-digit-plus-`F` CCN kept verbatim (see the staging
+          model's comment); federal facilities never appear in the
+          Medicare claims facts, so those rows are dimension-only.
         data_tests:
           - not_null
           - unique

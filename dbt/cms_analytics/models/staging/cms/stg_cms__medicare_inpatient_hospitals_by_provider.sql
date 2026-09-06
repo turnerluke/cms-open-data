@@ -8,7 +8,9 @@ renamed as (
 
     select
         -- identifiers (one row per hospital CCN)
-        trim(rndrng_prvdr_ccn) as ccn,
+        -- CCN join key, conformed as in
+        -- stg_cms__hospital_general_information
+        upper(trim(rndrng_prvdr_ccn)) as ccn,
         trim(rndrng_prvdr_org_name) as provider_name,
 
         -- address
