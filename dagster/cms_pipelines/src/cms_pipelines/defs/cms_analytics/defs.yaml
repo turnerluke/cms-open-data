@@ -2,3 +2,10 @@ type: dagster_dbt.DbtProjectComponent
 
 attributes:
   project: "{{ context.project_root }}/../../dbt/cms_analytics"
+  # Map each dbt source table (`cms_raw.cms_<key>`) onto the extraction
+  # asset of the same name so dbt models sit downstream of the `cms_*`
+  # extraction assets in the asset graph. Without this, sources resolve
+  # to detached `cms_raw/<table>` external specs and a full-pipeline job
+  # can't order extraction before dbt. Model keys pass through unchanged.
+  translation:
+    key: "{{ node.name if node.resource_type == 'source' else spec.key.to_user_string() }}"
