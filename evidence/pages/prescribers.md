@@ -216,8 +216,8 @@ limit 20
 
 The top 25 drugs joined to `fct_part_d_drug_spending`'s
 manufacturer-roll-up gross spending for the same drug, via `drug_key`
-(exact upper-cased brand + generic match — the Part D spending file
-star-marks some aggregated names, so not everything joins).
+(exact upper-cased brand + generic match; staging strips the Part D
+spending file's trailing-`*` aggregate marker, so the names line up).
 
 ```sql vs_match
 select
@@ -230,9 +230,12 @@ from cms.prescriber_vs_part_d
 <Value data={vs_match} column=matched fmt=num0 /> of
 <Value data={vs_match} column=top_drugs fmt=num0 /> top drugs match a
 <Value data={vs_match} column=part_d_year fmt=id /> gross-spending
-row. For those, prescriber-billed cost lands at roughly 80–96% of
-gross Part D spending — consistent with the prescriber file dropping
-sub-11-claim rows and covering a slightly narrower claim universe.
+row. Prescriber-billed cost lands at roughly 80–96% of gross Part D
+spending for most drugs — consistent with the prescriber file
+dropping sub-11-claim rows and covering a slightly narrower claim
+universe. Stelara sits lower (~67%): its gross-spending row is one
+CMS star-marked as aggregating brand and generic versions, while the
+billed figure covers only rows the prescriber file names `Stelara`.
 Neither figure is net of rebates.
 
 ```sql vs_part_d
@@ -269,13 +272,17 @@ order by prescriber_billed_cost desc
   <Value data={headline} column=suppressed_beneficiary_share fmt=pct1 />
   of rows, so this page never sums beneficiaries or computes
   per-beneficiary figures.
-- **Drug conformance is partial.**
-  <Value data={headline} column=dim_drug_orphan_share fmt=pct1 /> of
-  rows have no `dim_drug` match because the Part D spending files
-  star-mark aggregated drug names; the gross-spending comparison above
-  covers only exact-name matches
-  (<Value data={vs_match} column=matched fmt=num0 /> of
-  <Value data={vs_match} column=top_drugs fmt=num0 /> top drugs).
+- **Star-marked spending rows aggregate brand and generic versions.**
+  The Part D spending file star-marks drug names whose estimates
+  aggregate brand and generic versions; staging strips the marker so
+  every row here conforms to `dim_drug`
+  (<Value data={headline} column=dim_drug_orphan_share fmt=pct1 /> of
+  rows orphan, enforced by a dbt test) and the gross-spending
+  comparison covers all
+  <Value data={vs_match} column=top_drugs fmt=num0 /> top drugs — but
+  an aggregated gross figure can overshoot its brand-only
+  prescriber-billed counterpart, which is why Stelara's billed/gross
+  ratio runs low.
 - **Billed ≠ net.** Prescriber-billed drug cost ignores manufacturer
   rebates and DIR; actual net Part D spending is materially lower,
   especially for high-rebate brand drugs.

@@ -71,7 +71,10 @@ models:
       `fct_prescriber_drug_spending.drug_key`).
 
       Conformance is **exact-name matching only**: names are trimmed
-      (with empty strings nulled) in staging, upper-cased here, and
+      (with empty strings nulled) and stripped of the spending files'
+      trailing-`*` marker (which flags estimates aggregated across
+      brand and generic versions — see the staging models'
+      `is_brand_generic_aggregate`) in staging, upper-cased here, and
       compared literally — no
       RxNorm mapping, ingredient normalization, or fuzzy matching.
       `in_part_b and in_part_d` therefore only captures drugs whose
@@ -99,7 +102,8 @@ models:
           publish a brand name without a generic.
       - name: part_b_brand_name
         description: |
-          Brand name as spelled in the Part B file; `NULL` when the
+          Brand name as spelled in the Part B file (minus the
+          trailing-`*` marker, stripped in staging); `NULL` when the
           drug only appears in Part D. Case-only variants within the
           source collapse to the first spelling by binary collation,
           chosen per column — the as-seen brand/generic pair may

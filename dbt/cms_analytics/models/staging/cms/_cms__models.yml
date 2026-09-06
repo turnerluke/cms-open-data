@@ -77,9 +77,13 @@ models:
     description: |
       Medicare Part D Spending by Drug (CMS data-api/v1 dataset
       `7e0b4365-fd63-4a29-8f5e-e0ac9f66a81b`), wide by year
-      (2020–2024). Staging only renames the abbreviated CMS columns
-      (`Tot_Spndng_2023` → `total_spending_2023`, etc.) and maps the
-      0/1 outlier flags to booleans. The flags are three-valued:
+      (2020–2024). Staging renames the abbreviated CMS columns
+      (`Tot_Spndng_2023` → `total_spending_2023`, etc.), maps the
+      0/1 outlier flags to booleans, and strips the source's
+      trailing-`*` drug-name marker (which flags estimates aggregated
+      across brand and generic versions) into
+      `is_brand_generic_aggregate` so names conform with the other
+      CMS drug files. The flags are three-valued:
       `NULL` when the drug wasn't marketed that year, so consumers
       must handle `NULL` explicitly rather than filtering with a bare
       `not is_outlier_*`. The unpivot to a long
@@ -89,11 +93,25 @@ models:
       manufacturers for the drug.
     columns:
       - name: brand_name
-        description: "Drug brand name (trimmed `Brnd_Name`; empty strings become `NULL`)."
+        description: |
+          Drug brand name (trimmed `Brnd_Name`; empty strings become
+          `NULL`; the trailing-`*` aggregate marker is stripped — see
+          `is_brand_generic_aggregate`).
         data_tests:
           - not_null
       - name: generic_name
-        description: "Drug generic name (trimmed `Gnrc_Name`; empty strings become `NULL`)."
+        description: |
+          Drug generic name (trimmed `Gnrc_Name`; empty strings
+          become `NULL`; the trailing-`*` aggregate marker is
+          stripped, though the current vintage only stars brand
+          names).
+        data_tests:
+          - not_null
+      - name: is_brand_generic_aggregate
+        description: |
+          `TRUE` when the source starred the drug name, i.e. the
+          row's spending estimates aggregate brand and generic
+          versions of the drug.
         data_tests:
           - not_null
       - name: manufacturer_name
@@ -118,9 +136,13 @@ models:
     description: |
       Medicare Part B Spending by Drug (CMS data-api/v1 dataset
       `76a714ad-3a2c-43ac-b76d-9dadf8f7d890`), wide by year
-      (2020–2024). Staging only renames the abbreviated CMS columns
-      and maps the 0/1 outlier flags to booleans — the unpivot to a
-      long drug-year grain belongs in the mart layer. Grain:
+      (2020–2024). Staging renames the abbreviated CMS columns, maps
+      the 0/1 outlier flags to booleans, and strips the source's
+      trailing-`*` drug-name marker (which flags estimates aggregated
+      across brand and generic versions; this file stars brand and
+      generic together) into `is_brand_generic_aggregate` so names
+      conform with the other CMS drug files. The unpivot to a long
+      drug-year grain belongs in the mart layer. Grain:
       `hcpcs_code`.
     columns:
       - name: hcpcs_code
@@ -133,9 +155,22 @@ models:
       - name: hcpcs_description
         description: "HCPCS code description (trimmed)."
       - name: brand_name
-        description: "Drug brand name (trimmed `Brnd_Name`; empty strings become `NULL`)."
+        description: |
+          Drug brand name (trimmed `Brnd_Name`; empty strings become
+          `NULL`; the trailing-`*` aggregate marker is stripped — see
+          `is_brand_generic_aggregate`).
       - name: generic_name
-        description: "Drug generic name (trimmed `Gnrc_Name`; empty strings become `NULL`)."
+        description: |
+          Drug generic name (trimmed `Gnrc_Name`; empty strings
+          become `NULL`; the trailing-`*` aggregate marker is
+          stripped).
+      - name: is_brand_generic_aggregate
+        description: |
+          `TRUE` when the source starred the drug names, i.e. the
+          row's spending estimates aggregate brand and generic
+          versions of the drug.
+        data_tests:
+          - not_null
 
   - name: stg_cms__medicare_part_d_prescribers_by_provider_and_drug
     description: |
