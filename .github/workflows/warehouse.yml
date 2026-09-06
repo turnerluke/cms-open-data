@@ -21,8 +21,15 @@
 # lags the data itself, and a ~700 MB weekly-churning entry would crowd
 # the repo's shared 10 GB actions-cache cap to save ~15 minutes/week.
 #
-# Deploy: none yet. The `evidence-site` artifact is the hand-off point
-# for a future GitHub Pages deploy job (planned as a follow-up PR).
+# Deploy: a dependent `deploy_pages` job publishes the built site to
+# GitHub Pages (https://turnerluke.github.io/cms-open-data/) via the
+# modern actions flow (upload-pages-artifact → deploy-pages). The repo's
+# Pages build type must be set to "GitHub Actions" for this to work.
+# Because the site is served under the /cms-open-data/ subpath, the
+# build step patches `deployment.basePath` into evidence.config.yaml
+# first — Evidence 40.x reads the base path only from that file (no
+# env-var override exists), and keeping the checked-in config
+# basePath-free preserves root-pathed local dev/preview builds.
 #
 # Secrets: none. All CMS endpoints used by the selected extraction
 # assets (Provider Data Catalog DKAN + data.cms.gov bulk CSV) are
@@ -128,13 +135,26 @@ jobs:
         working-directory: evidence
         run: npm run sources
 
+      # Evidence 40.x reads `deployment.basePath` exclusively from
+      # evidence.config.yaml (see @evidence-dev/sdk's getEvidenceConfig
+      # — it has no environment-variable override), so the subpath for
+      # project pages has to be patched into the file at build time.
+      # The checked-in config deliberately has no `deployment` block:
+      # local `npm run dev` / `npm run build:strict` stay root-pathed.
+      - name: Set Evidence base path for project pages
+        working-directory: evidence
+        run: |
+          printf 'deployment:\n  basePath: /cms-open-data\n' >> evidence.config.yaml
+
       - name: Build Evidence site
         working-directory: evidence
         run: npm run build:strict
 
-      # Stable artifact name + path is the contract for the future
-      # Pages deploy job: it will download `evidence-site` and publish
-      # it, so keep both unchanged when that job lands.
+      # Plain copy of the site alongside the Pages artifact: the Pages
+      # artifact below is a single opaque tarball consumed by
+      # deploy-pages, while this one is browsable per-file in the run
+      # UI — kept (14-day retention, ~100 MB uncompressed) so a bad
+      # deploy can be debugged without rebuilding the warehouse.
       - name: Upload Evidence site artifact
         uses: actions/upload-artifact@v7
         with:
@@ -142,3 +162,34 @@ jobs:
           path: evidence/build
           retention-days: 14
           if-no-files-found: error
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: evidence/build
+
+  # ============================================================================================================================
+  # Deploy to GitHub Pages
+  # ============================================================================================================================
+  deploy_pages:
+    name: Deploy to GitHub Pages
+    needs: build_warehouse
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Deploy-only permissions live here so the (much larger) build job
+    # keeps its read-only token. `id-token: write` is required by
+    # deploy-pages for OIDC provenance; `pages: write` performs the
+    # deployment itself.
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v6
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

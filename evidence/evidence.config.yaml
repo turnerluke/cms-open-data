@@ -1,3 +1,6 @@
+# Do not add a `deployment:` block here — the Pages deploy step in
+# .github/workflows/warehouse.yml appends one (basePath) at build
+# time, and a duplicate top-level key would fail the CI build.
 appearance:
   default: system
   switcher: true

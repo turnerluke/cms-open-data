@@ -22,6 +22,23 @@ holds the script that reproduces the per-subproject test matrix — the
 idea being that anything CI would reject should fail on the developer's
 machine first.
 
+## Dashboard deploy pipeline
+
+[`.github/workflows/warehouse.yml`](../.github/workflows/warehouse.yml)
+rebuilds everything from scratch weekly (Mondays 05:17 UTC): fresh CMS
+downloads via Dagster, `dbt build`, the Evidence static site, then a
+deploy to GitHub Pages at
+<https://turnerluke.github.io/cms-open-data/>. To re-deploy manually,
+trigger the workflow from the Actions tab or run:
+
+```bash
+gh workflow run "Warehouse Build"
+```
+
+Gotcha: GitHub automatically disables scheduled workflows after 60
+days without repository activity. If the site goes stale, check the
+Actions tab for a "workflow disabled" banner and re-enable it.
+
 ## Agent-assisted development
 
 This repo is developed with [Claude Code](https://claude.com/claude-code).
