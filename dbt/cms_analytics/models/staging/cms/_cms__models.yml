@@ -137,6 +137,175 @@ models:
       - name: generic_name
         description: "Drug generic name (trimmed `Gnrc_Name`; empty strings become `NULL`)."
 
+  - name: stg_cms__medicare_part_d_prescribers_by_provider_and_drug
+    description: |
+      Medicare Part D Prescribers — by Provider and Drug (CMS
+      data-api/v1 dataset `9552739e-3d05-4c1b-8eff-ecabf391e2e5`).
+      One row per prescriber NPI per brand/generic drug with Part D
+      claim, fill, day-supply, cost, and beneficiary totals. The bulk
+      CSV covers the latest published data year only (the RY26 file
+      carries `DY24` — calendar 2024 — data) and has no year column,
+      so any prescriber-year grain must take the year from the
+      dataset vintage. CMS excludes prescriber-drug combinations with
+      10 or fewer claims from the file entirely, and further
+      suppresses `total_beneficiaries` (blank → `NULL`) and the GE65
+      columns (see the flag columns) below its disclosure thresholds
+      — so consumers must handle `NULL` explicitly. Staging renames
+      the abbreviated CMS columns (`Tot_Clms` → `total_claims`,
+      `Prscrbr_Type` → `prescriber_type`, etc.) and zero-pads the NPI
+      to ten-digit text. Grain: (`npi`, `brand_name`,
+      `generic_name`). Feeds `fct_prescriber_drug_spending`,
+      conforming to `dim_drug` on the drug names.
+    columns:
+      - name: npi
+        description: |
+          National Provider Identifier of the prescriber (raw
+          `Prscrbr_NPI`), kept as zero-padded ten-digit text.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{10}$'
+      - name: prescriber_last_org_name
+        description: |
+          Prescriber last name, or organization name for
+          organizational NPIs (trimmed `Prscrbr_Last_Org_Name`).
+      - name: prescriber_first_name
+        description: "Prescriber first name; empty strings become `NULL`."
+      - name: city
+        description: "Prescriber city (trimmed `Prscrbr_City`)."
+      - name: state
+        description: |
+          Prescriber state abbreviation (raw `Prscrbr_State_Abrvtn`).
+          Besides the 50 states this includes DC, territories, `XX`
+          (unknown) and `ZZ` (foreign).
+        data_tests:
+          - not_null
+      - name: state_fips
+        description: |
+          Two-digit state FIPS code, kept as a string to preserve
+          leading zeros. Pseudo-codes cover the non-state buckets
+          (`9D` for `XX`/unknown, `9E` for `ZZ`/foreign); `NULL` only
+          for areas without any code (one `FM` row in the current
+          vintage).
+      - name: prescriber_type
+        description: |
+          Prescriber specialty (raw `Prscrbr_Type`), sourced from the
+          claims or the NPPES record per `prescriber_type_source`.
+      - name: prescriber_type_source
+        description: |
+          Where `prescriber_type` came from: `Claim-Specialty` (most
+          common on the prescriber's claims) or `NPPES` (taxonomy
+          fallback).
+      - name: brand_name
+        description: |
+          Drug brand name as marketed, or the generic name again for
+          generics (trimmed `Brnd_Name`). Grain column with `npi` and
+          `generic_name`.
+        data_tests:
+          - not_null
+      - name: generic_name
+        description: |
+          Drug generic (chemical) name (trimmed `Gnrc_Name`).
+        data_tests:
+          - not_null
+      - name: total_claims
+        description: |
+          Part D claims for the prescriber-drug, including refills.
+          Never `NULL` or below 11: CMS drops rows with 10 or fewer
+          claims from the file instead of suppressing in place.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 11
+                inclusive: true
+      - name: total_30day_fills
+        description: |
+          Claims normalized to 30-day-equivalent fills (a 90-day
+          supply counts as 3), so it can exceed `total_claims`.
+        data_tests:
+          - not_null
+      - name: total_day_supply
+        description: "Total days' supply dispensed."
+        data_tests:
+          - not_null
+      - name: total_drug_cost
+        description: |
+          Total drug cost paid by all parties (plan, beneficiary,
+          government subsidies, third parties): ingredient cost,
+          dispensing fee, sales tax, and any vaccine administration
+          fee. In dollars.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_beneficiaries
+        description: |
+          Distinct beneficiaries filling the drug from the
+          prescriber; `NULL` when CMS suppresses counts of 10 or
+          fewer.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 11
+                inclusive: true
+      - name: ge65_suppression_flag
+        description: |
+          Suppression flag for the GE65 claim/fill/supply/cost
+          columns: `*` — suppressed because the age-65+ claim count
+          is 1–10; `#` — counter-suppressed because the under-65
+          complement (`total_claims` minus GE65 claims) is 1–10 and
+          would be recalculable; `NULL` — disclosed.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+      - name: ge65_total_claims
+        description: |
+          Part D claims for beneficiaries aged 65 and over; `NULL`
+          when `ge65_suppression_flag` is set.
+      - name: ge65_total_30day_fills
+        description: |
+          30-day-equivalent fills for beneficiaries aged 65 and over;
+          `NULL` when suppressed.
+      - name: ge65_total_day_supply
+        description: |
+          Days' supply for beneficiaries aged 65 and over; `NULL`
+          when suppressed.
+      - name: ge65_total_drug_cost
+        description: |
+          Drug cost for beneficiaries aged 65 and over, in dollars;
+          `NULL` when suppressed.
+      - name: ge65_beneficiary_suppression_flag
+        description: |
+          Suppression flag for `ge65_total_beneficiaries`, with the
+          same `*` / `#` / `NULL` semantics as
+          `ge65_suppression_flag` applied to beneficiary counts.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+      - name: ge65_total_beneficiaries
+        description: |
+          Distinct beneficiaries aged 65 and over; `NULL` when
+          `ge65_beneficiary_suppression_flag` is set (and whenever
+          `total_beneficiaries` itself is suppressed).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - npi
+              - brand_name
+              - generic_name
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              ge65_total_claims <= total_claims
+              or ge65_total_claims is null
+
   - name: stg_cms__medicare_inpatient_hospitals_by_provider
     description: |
       Medicare Inpatient Hospitals — by Provider (CMS data-api/v1

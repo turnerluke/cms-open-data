@@ -328,6 +328,145 @@ models:
               - hcpcs_code
               - spending_year
 
+  - name: fct_prescriber_drug_spending
+    description: |
+      Medicare Part D prescribing, one row per prescriber per drug
+      from `stg_cms__medicare_part_d_prescribers_by_provider_and_drug`.
+      Grain: (`npi`, `brand_name`, `generic_name`).
+
+      Modeling choices to be aware of:
+
+      - The source file is a single latest-vintage snapshot (data
+        year 2024) with no year column, so the fact carries **no
+        `spending_year`** — see the `TODO` in the model about
+        dataset-vintage tracking.
+      - CMS drops prescriber-drug rows with 10 or fewer claims from
+        the file entirely and suppresses `total_beneficiaries` below
+        11, so `cost_per_beneficiary` is `NULL` on suppressed rows.
+        Nothing is coalesced to 0. The staging model's GE65 (aged
+        65+) column family is not carried into the fact; read it
+        from staging when age-band analysis is needed.
+      - `drug_key` is hashed from the upper-cased drug names with
+        the same expression as `dim_drug`, but about 16% of rows
+        orphan: the spending files that feed `dim_drug` append a
+        trailing `*` (flagging estimates aggregated across brand and
+        generic versions) to the brand name — and sometimes the
+        generic name — that the prescriber file omits, so those
+        drugs hash to different keys — the relationships test warns
+        rather than errors (see the `TODO` on the test).
+    columns:
+      - name: npi
+        description: |
+          National Provider Identifier of the prescriber, zero-padded
+          ten-digit text. Grain column with the drug names.
+        data_tests:
+          - not_null
+      - name: prescriber_last_org_name
+        description: |
+          Prescriber last name (CMS reserves this column for the
+          organization name on organizational NPIs, but the current
+          vintage contains individual prescribers only).
+      - name: prescriber_first_name
+        description: |
+          Prescriber first name. Never `NULL` in the current
+          vintage, which contains individual prescribers only.
+      - name: prescriber_type
+        description: "Prescriber specialty (source `Prscrbr_Type`)."
+      - name: city
+        description: "Prescriber city."
+      - name: state
+        description: |
+          Prescriber state abbreviation, including DC, territories,
+          `XX` (unknown) and `ZZ` (foreign).
+        data_tests:
+          - not_null
+      - name: brand_name
+        description: |
+          Drug brand name as marketed, or the generic name again for
+          generics. Grain column.
+        data_tests:
+          - not_null
+      - name: generic_name
+        description: "Drug generic (chemical) name. Grain column."
+        data_tests:
+          - not_null
+      - name: drug_key
+        description: |
+          Surrogate key into `dim_drug`, hashed from the upper-cased
+          brand and generic names.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_drug')
+                field: drug_key
+              config:
+                # TODO: promote to error once dim_drug strips the
+                # spending files' trailing-`*` marker (it flags
+                # estimates aggregated across brand and generic
+                # versions; it appears on the brand name and
+                # sometimes the generic name too). 4,542,646 rows
+                # over 153 distinct drugs orphan today, e.g.
+                # `PANTOPRAZOLE SODIUM*` vs this file's
+                # `Pantoprazole Sodium`; stripping the marker from
+                # both dim_drug name columns conforms all 153.
+                severity: warn
+      - name: total_claims
+        description: |
+          Part D claims for the prescriber-drug, including refills.
+          Always at least 11 — CMS drops smaller rows from the file.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 11
+                inclusive: true
+      - name: total_30day_fills
+        description: |
+          Claims normalized to 30-day-equivalent fills (a 90-day
+          supply counts as 3), so it can exceed `total_claims`.
+        data_tests:
+          - not_null
+      - name: total_day_supply
+        description: "Total days' supply dispensed."
+        data_tests:
+          - not_null
+      - name: total_drug_cost
+        description: |
+          Total drug cost paid by all parties (plan, beneficiary,
+          government subsidies, third parties), in dollars.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_beneficiaries
+        description: |
+          Distinct beneficiaries filling the drug from the
+          prescriber; `NULL` when CMS suppresses counts of 10 or
+          fewer.
+      - name: cost_per_claim
+        description: |
+          `total_drug_cost / total_claims`. Claims mix 30- and
+          90-day fills, so compare prescribers on
+          `cost_per_day_supplied` when fill-length mix matters.
+      - name: cost_per_beneficiary
+        description: |
+          `total_drug_cost / total_beneficiaries`. `NULL` when the
+          beneficiary count is suppressed.
+      - name: cost_per_day_supplied
+        description: |
+          `total_drug_cost / total_day_supply` — the least
+          fill-mix-sensitive unit cost.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - npi
+              - brand_name
+              - generic_name
+
   - name: fct_part_d_drug_spending
     description: |
       Medicare Part D drug spending, unpivoted from the wide-by-year
