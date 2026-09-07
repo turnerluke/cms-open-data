@@ -784,9 +784,20 @@ models:
       - name: ccn
         description: |
           CMS Certification Number of the nursing home, conformed as
-          `upper(trim())`.
+          `upper(trim())`. Foreign key to `dim_nursing_home`,
+          enforced at error severity — the 2026-08 vintage has zero
+          orphan CCNs (all six nursing-home files come from the same
+          Care Compare snapshot, unlike the hospital claims facts).
+          A failure means the snapshots have desynchronized —
+          compare the nursing-home rows of
+          `stg_cms__dataset_vintages` — and the build should fail
+          rather than publish detail rows that join to no home.
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_nursing_home')
+                field: ccn
       - name: measure_code
         description: |
           Numeric MDS measure code (e.g. `401`), kept as text.
@@ -845,9 +856,20 @@ models:
       - name: ccn
         description: |
           CMS Certification Number of the nursing home, conformed as
-          `upper(trim())`.
+          `upper(trim())`. Foreign key to `dim_nursing_home`,
+          enforced at error severity — the 2026-08 vintage has zero
+          orphan CCNs (all six nursing-home files come from the same
+          Care Compare snapshot, unlike the hospital claims facts).
+          A failure means the snapshots have desynchronized —
+          compare the nursing-home rows of
+          `stg_cms__dataset_vintages` — and the build should fail
+          rather than publish detail rows that join to no home.
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_nursing_home')
+                field: ccn
       - name: measure_code
         description: |
           Numeric claims measure code (e.g. `521`), kept as text.
@@ -896,9 +918,20 @@ models:
       - name: ccn
         description: |
           CMS Certification Number of the nursing home, conformed as
-          `upper(trim())`.
+          `upper(trim())`. Foreign key to `dim_nursing_home`,
+          enforced at error severity — the 2026-08 vintage has zero
+          orphan CCNs (all six nursing-home files come from the same
+          Care Compare snapshot, unlike the hospital claims facts).
+          A failure means the snapshots have desynchronized —
+          compare the nursing-home rows of
+          `stg_cms__dataset_vintages` — and the build should fail
+          rather than publish detail rows that join to no home.
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_nursing_home')
+                field: ccn
       - name: survey_date
         description: "Date of the inspection survey that cited the deficiency."
         data_tests:
@@ -972,9 +1005,20 @@ models:
       - name: ccn
         description: |
           CMS Certification Number of the nursing home, conformed as
-          `upper(trim())`.
+          `upper(trim())`. Foreign key to `dim_nursing_home`,
+          enforced at error severity — the 2026-08 vintage has zero
+          orphan CCNs (all six nursing-home files come from the same
+          Care Compare snapshot, unlike the hospital claims facts).
+          A failure means the snapshots have desynchronized —
+          compare the nursing-home rows of
+          `stg_cms__dataset_vintages` — and the build should fail
+          rather than publish detail rows that join to no home.
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_nursing_home')
+                field: ccn
       - name: penalty_date
         description: "Date the penalty was imposed."
         data_tests:
@@ -1052,9 +1096,20 @@ models:
       - name: ccn
         description: |
           CMS Certification Number of the nursing home, conformed as
-          `upper(trim())`.
+          `upper(trim())`. Foreign key to `dim_nursing_home`,
+          enforced at error severity — the 2026-08 vintage has zero
+          orphan CCNs (all six nursing-home files come from the same
+          Care Compare snapshot, unlike the hospital claims facts).
+          A failure means the snapshots have desynchronized —
+          compare the nursing-home rows of
+          `stg_cms__dataset_vintages` — and the build should fail
+          rather than publish detail rows that join to no home.
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_nursing_home')
+                field: ccn
       - name: owner_role
         description: |
           Role of the owner or manager (raw
