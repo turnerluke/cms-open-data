@@ -225,6 +225,21 @@ from cms.nursing_home_enforcement_by_year
 order by action_year
 ```
 
+```sql fines_by_year
+select
+    action_year,
+    fines,
+    total_fine_amount,
+    payment_denials
+from cms.nursing_home_enforcement_by_year
+where action_year >= (
+    select min(action_year)
+    from cms.nursing_home_enforcement_by_year
+    where fines > 0
+)
+order by action_year
+```
+
 <BarChart
   data={enforcement_by_year}
   x=action_year
@@ -234,7 +249,7 @@ order by action_year
 />
 
 <BarChart
-  data={enforcement_by_year}
+  data={fines_by_year}
   x=action_year
   y=total_fine_amount
   title="Fines imposed by year"
