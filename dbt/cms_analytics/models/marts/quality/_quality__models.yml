@@ -667,3 +667,294 @@ models:
             expression: |
               (coalesce(penalty_type, '') = 'Payment Denial')
               = (payment_denial_length_in_days is not null)
+
+  - name: fct_hospice_quality
+    description: |
+      Hospice HIS / HCI quality measures in long format, one row per
+      (`ccn`, `measure_code`). Grain: (`ccn`, `measure_code`) —
+      453,492 rows in the current vintage (6,669 hospices × 68
+      measure codes; every hospice ships every code, whether or not a
+      value is reported).
+
+      Modeling choices to be aware of:
+
+      - The source ships `score` as a single text column that mixes
+        three shapes across measures; the fact keeps the raw text as
+        `score` **and** exposes a numeric parse as `score_numeric`:
+        - **Numeric** (some formatted with thousands commas like
+          `1,152`): parsed into `score_numeric`. Value semantics vary
+          by measure — HCI `*_PERCENTILE` codes are 0-100, HCI
+          `*_OBSERVED` codes are percentages / per-beneficiary
+          dollars / minutes depending on the specific measure, HIS
+          `H_00*_01_OBSERVED` codes are 0-100 percentages, and
+          `*_DENOMINATOR` / `H_012_00_NUMBEROFCLAIMS` codes are raw
+          counts (max observed 159,714,660 on
+          `H_012_09_DENOMINATOR`, which is weekend skilled-nursing
+          minutes). Because the units differ by `measure_code`,
+          `score_numeric` is only comparable **within** a code, never
+          across measures.
+        - **Boolean** `Yes` / `No`: four measures ship a flag
+          instead of a number — `Bene_Dual_Pct` and `Bene_MA_Pct`
+          (whether the hospice served at least one dual-eligible or
+          MA patient), and `Provided_Home_Care_only` /
+          `Provided_Home_Care_and_other` (care-mix flags). Left as
+          text in `score`; `score_numeric` is `NULL`.
+        - **Sentinel** `Not Available` (optionally with a footnote
+          parenthetical like `Not Available(12)`): CMS-suppressed.
+          `score_numeric` is `NULL`; `score_footnote` carries the
+          reason code when present.
+      - Rows whose `score_numeric` is `NULL` (suppressed, sentinel,
+        or Yes/No) are **kept**, so measure coverage per hospice
+        stays analyzable — 323,647 of 453,492 rows have a non-null
+        `score_numeric` in the current vintage.
+      - Hospice name/address attributes are not inlined; join
+        `dim_hospice` on `ccn` for them.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number of the hospice. Foreign key to
+          `dim_hospice`, enforced at error severity — verified zero
+          orphan CCNs in the current vintage (both the fact and the
+          dim share the same Care Compare snapshot). A failure means
+          the snapshots have desynchronized — compare `as_of` against
+          `dim_hospice.as_of` — and the weekly build should fail
+          rather than publish quality rows that join to no hospice.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_hospice')
+                field: ccn
+      - name: measure_code
+        description: |
+          CMS HIS / HCI measure identifier (e.g. `H_001_01_OBSERVED`,
+          `H_012_07_PERCENTILE`, `Average_Daily_Census`,
+          `Bene_MA_Pct`). Unique per hospice.
+        data_tests:
+          - not_null
+      - name: measure_name
+        description: |
+          Human-readable measure description passed through from the
+          source `measure_name`. Populated on every row (a handful of
+          `_MBV` middle-box codes ship an empty description; those
+          are trimmed to empty string, not null).
+      - name: score
+        description: |
+          Raw source `score` text, preserved verbatim (with any
+          thousands commas, `Yes` / `No`, or `Not Available[(n)]`
+          sentinels intact) so analysts can distinguish suppressions
+          from booleans from real values. See the model description
+          for the three shapes this column can take.
+      - name: score_numeric
+        description: |
+          Parsed numeric form of `score`: thousands commas stripped,
+          `Yes` / `No` / `Not Available*` mapped to `NULL`. Units and
+          value ranges depend on the `measure_code` (see model
+          description) — only comparable within a measure. All
+          non-null values are non-negative in the current vintage.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: score_footnote
+        description: |
+          CMS footnote code(s) explaining a missing or qualified
+          value; `NULL` when no footnote applies (the source's `-`
+          "no footnote" sentinel is nullified here). Can be a single
+          code (`1`, `2`, `12`, `14`) or a comma-joined multi-code
+          (`2,5`, `1,2`), so this stays as text rather than being
+          cast to an integer.
+      - name: period_start_date
+        description: |
+          First day of the measurement period. Parsed in the fact
+          from the source's verbatim `measure_date_range` string,
+          which is `MM/DD/YYYY - MM/DD/YYYY` (with spaces around the
+          dash — the CAHPS sibling files use a no-space variant).
+          Four distinct period windows coexist in the current
+          vintage because HIS, HCI, structural, and case-mix
+          measures cover different reporting periods.
+        data_tests:
+          - not_null
+      - name: period_end_date
+        description: |
+          Last day of the measurement period. Parsed from the second
+          half of the source's `measure_date_range` string.
+        data_tests:
+          - not_null
+      - name: as_of
+        description: |
+          Snapshot vintage of the source dataset: the upstream
+          `modified` date CMS reported for `hospice_provider_quality`
+          (from `stg_cms__dataset_vintages`).
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ccn
+              - measure_code
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "period_start_date <= period_end_date"
+
+  - name: fct_hospice_cahps
+    description: |
+      Hospice CAHPS (Consumer Assessment of Healthcare Providers and
+      Systems) family-caregiver survey results in long format, one
+      row per (`ccn`, `measure_code`). Grain: (`ccn`, `measure_code`)
+      — 146,718 rows in the current vintage (6,669 hospices × 22
+      measure codes).
+
+      Modeling choices to be aware of:
+
+      - 21 of the 22 measure codes are bottom-box / middle-box /
+        top-box percentages (`*_BBV` / `*_MBV` / `*_TBV`) for seven
+        composites: `EMO_REL`, `RATING`, `RECOMMEND`, `RESPECT`,
+        `SYMPTOMS`, `TEAM_COMM`, `TIMELY_CARE`. The 22nd code is
+        `SUMMARY_STAR_RATING`, whose numeric value lives on
+        `star_rating` (1-5) rather than `score` (which ships the
+        text `Not Applicable` for those rows).
+      - `score` in the source is a text column with three shapes;
+        the fact keeps the raw text as `score` and exposes a numeric
+        parse as `score_numeric`:
+        - **Numeric** (0-100 percentage on `*_BBV` / `*_MBV` /
+          `*_TBV` codes): parsed into `score_numeric`.
+        - **`Not Available`** (CMS-suppressed with a footnote
+          reason): `score_numeric` `NULL`.
+        - **`Not Applicable`** (used for every `SUMMARY_STAR_RATING`
+          row and a handful of other suppressed rows):
+          `score_numeric` `NULL`. Kept distinct from `Not Available`
+          in the raw text so analysts can tell suppressed values
+          apart from "no percentage applies here — look at
+          `star_rating`".
+      - `national_value` is joined from `stg_cms__hospice_cahps_national`
+        on `measure_code`. It is `NULL` for two cases in the current
+        vintage, both documented on the column:
+        - `SUMMARY_STAR_RATING`: the national file publishes no
+          summary-star row at all.
+        - `EMO_REL_MBV`: the national file ships `Not Applicable` in
+          its `score` cell (CMS itself flags the middle box of this
+          composite as inapplicable at the national level).
+      - Rows whose `score_numeric` is `NULL` are **kept** so measure
+        coverage per hospice stays analyzable — 64,080 of 146,718
+        rows have a non-null `score_numeric`; 2,164 of 6,669 hospices
+        have a numeric `star_rating`.
+      - Hospice name/address attributes are not inlined; join
+        `dim_hospice` on `ccn` for them.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number of the hospice. Foreign key to
+          `dim_hospice`, enforced at error severity — verified zero
+          orphan CCNs in the current vintage. A failure means the
+          hospice CAHPS provider file and general-information file
+          have desynchronized — compare `as_of` against
+          `dim_hospice.as_of` — and the weekly build should fail
+          rather than publish CAHPS rows that join to no hospice.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_hospice')
+                field: ccn
+      - name: measure_code
+        description: |
+          CAHPS measure identifier: 21 `*_BBV` / `*_MBV` / `*_TBV`
+          codes across seven composites, plus `SUMMARY_STAR_RATING`.
+        data_tests:
+          - not_null
+      - name: measure_name
+        description: |
+          Human-readable measure text describing what the box captures
+          (e.g. "The hospice team always treated the patient with
+          respect"). The `EMO_REL_MBV` rows ship an empty string in
+          the source — passed through unchanged.
+      - name: score
+        description: |
+          Raw source `score` text: a numeric percentage on the
+          `*_BBV` / `*_MBV` / `*_TBV` codes, the sentinel
+          `Not Available` for CMS suppression, or `Not Applicable`
+          (populated for every `SUMMARY_STAR_RATING` row and a
+          handful of other cases). Kept as text so the two sentinels
+          stay distinguishable — see model description.
+      - name: score_numeric
+        description: |
+          Parsed numeric form of `score`: 0-100 percentage on the
+          box-value rows, `NULL` on `Not Available` / `Not Applicable`
+          rows and on all `SUMMARY_STAR_RATING` rows (whose value
+          lives on `star_rating`).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: star_rating
+        description: |
+          Summary star rating (1-5); populated only on
+          `SUMMARY_STAR_RATING` rows and only when CMS reports a
+          numeric value (2,164 of 6,669 in the current vintage — the
+          remaining `SUMMARY_STAR_RATING` rows carry the sentinel
+          `Not Applicable` upstream, mapped to `NULL` here). Always
+          `NULL` on the 21 non-summary measure codes.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: score_footnote
+        description: |
+          CMS footnote code explaining a missing or qualified value;
+          `NULL` when no footnote applies. Can be a single code
+          (`11`, `15`, `6`) or a comma-joined multi-code (`6,7`), so
+          this stays as text rather than being cast to an integer.
+      - name: national_value
+        description: |
+          National benchmark percentage for the measure, joined from
+          `stg_cms__hospice_cahps_national` on `measure_code`. `NULL`
+          only for `SUMMARY_STAR_RATING` (no national row published)
+          and for `EMO_REL_MBV` (national ships `Not Applicable`);
+          populated for all 20 other measure codes on every hospice
+          in the current vintage.
+      - name: period_start_date
+        description: |
+          First day of the measurement period. Parsed in the fact
+          from the source's verbatim `measure_date_range` string,
+          which is `MM/DD/YYYY-MM/DD/YYYY` (NO spaces around the
+          dash — unlike the hospice-provider-quality sibling file).
+          One rolling window per vintage: 2023-10-01 → 2025-09-30 in
+          the current one.
+        data_tests:
+          - not_null
+      - name: period_end_date
+        description: |
+          Last day of the measurement period. Parsed from the second
+          half of the source's `measure_date_range` string.
+        data_tests:
+          - not_null
+      - name: as_of
+        description: |
+          Snapshot vintage of the source dataset: the upstream
+          `modified` date CMS reported for `hospice_cahps_provider`
+          (from `stg_cms__dataset_vintages`). The provider and
+          national files share one vintage date in the current
+          snapshot.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ccn
+              - measure_code
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "period_start_date <= period_end_date"
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (measure_code = 'SUMMARY_STAR_RATING')
+              or (star_rating is null)
