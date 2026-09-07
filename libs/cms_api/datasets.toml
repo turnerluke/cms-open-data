@@ -108,6 +108,34 @@ description = "Hospice General Information from Care Compare (DKAN dataset `yc9t
 group = "cms_raw_provider_compare"
 
 [[dataset]]
+key = "home_health_national"
+source = "dkan_provider_data"
+dataset_id = "97z8-de96"
+description = "Home Health Care — National Data from Care Compare (DKAN dataset `97z8-de96`). Landed by the `cms_home_health_national` Dagster asset."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "hospice_provider_quality"
+source = "dkan_provider_data"
+dataset_id = "252m-zfp9"
+description = "Hospice — Provider Data (HIS/HCI quality measures) from Care Compare (DKAN dataset `252m-zfp9`). Landed by the `cms_hospice_provider_quality` Dagster asset."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "hospice_cahps_provider"
+source = "dkan_provider_data"
+dataset_id = "gxki-hrr8"
+description = "Hospice Care — Provider CAHPS Hospice Survey Data from Care Compare (DKAN dataset `gxki-hrr8`). Landed by the `cms_hospice_cahps_provider` Dagster asset."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
+key = "hospice_cahps_national"
+source = "dkan_provider_data"
+dataset_id = "7cv8-v37d"
+description = "Hospice Care — National CAHPS Hospice Survey Data from Care Compare (DKAN dataset `7cv8-v37d`). Landed by the `cms_hospice_cahps_national` Dagster asset."
+group = "cms_raw_provider_compare"
+
+[[dataset]]
 key = "dialysis_facility_listing"
 source = "dkan_provider_data"
 dataset_id = "23ew-n7w9"

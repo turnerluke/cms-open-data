@@ -1163,6 +1163,290 @@ models:
               - owner_role
               - owner_name
 
+  - name: stg_cms__home_health_care_agencies
+    description: |
+      Home Health Care Agencies from CMS Care Compare (DKAN dataset
+      `6jpm-sxkc`). One row per Medicare-certified home-health agency
+      with directory, service-offering flags, the overall
+      quality-of-patient-care star rating, ~13 OASIS process/outcome
+      measures (numerator, denominator, percentage rate, and
+      footnote), and the three claims-based measures (DTC / PPR /
+      PPH — discharge to community, potentially preventable
+      readmissions, potentially preventable hospitalizations) with
+      observed and risk-standardized rates plus a categorical
+      performance bucket. Every raw column arrives as text: rates
+      become `double`, counts become `int`, dates become `date`, all
+      via `try_cast` so empty-string / `Not Available` sentinels
+      become `NULL`. `Yes`/`No` service flags map to booleans. The
+      wide quality-measure block is intentionally kept here rather
+      than pre-unpivoted; a follow-up PR feeds it into a long-format
+      home-health quality fact. Grain: `ccn`.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number, conformed as `upper(trim())`.
+          Home-health agency CCNs are six alphanumeric characters
+          (some carry a letter in the third position, e.g.
+          `07A001`) — they share no values with the hospital or
+          nursing-home CCN namespaces in this warehouse. Primary
+          key — one row per agency.
+        data_tests:
+          - not_null
+          - unique
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[0-9A-Z]{6}$"
+      - name: provider_name
+        description: "Home-health agency name (trimmed)."
+        data_tests:
+          - not_null
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros (raw `zip_code`).
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{5}$'
+      - name: ownership_type
+        description: "Ownership category, verbatim (raw `type_of_ownership`)."
+      - name: quality_of_patient_care_star_rating
+        description: |
+          Overall Care Compare star rating, 1–5 in 0.5-star
+          increments. Empty string / `Not Available` (~30% of
+          agencies each vintage) becomes `NULL`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: dtc_performance_category
+        description: |
+          CMS categorical performance bucket for the discharge-to-
+          community measure (`Better Than National Rate`, `Same As
+          National Rate`, `Worse Than National Rate`, or
+          `Not Available`); empty-string and `-` sentinels both
+          become `NULL`.
+      - name: ppr_performance_category
+        description: |
+          CMS categorical performance bucket for potentially
+          preventable readmissions (`Better Than National Rate`,
+          `Same As National Rate`, `Worse Than National Rate`, or
+          `Not Available`); empty-string and `-` sentinels both
+          become `NULL`.
+      - name: pph_performance_category
+        description: |
+          CMS categorical performance bucket for potentially
+          preventable hospitalizations (`Better Than National Rate`,
+          `Same As National Rate`, `Worse Than National Rate`, or
+          `Not Available`); empty-string and `-` sentinels both
+          become `NULL`.
+
+  - name: stg_cms__home_health_national
+    description: |
+      Home Health Care — National Data from CMS Care Compare (DKAN
+      dataset `97z8-de96`). Single-row national benchmark file: the
+      overall star-rating distribution (percent of agencies at each
+      band, in 0.5-star increments), national OASIS
+      process/outcome rates, national counts of agencies performing
+      better / no-different / worse than the national average for
+      the three claims-based measures (PPR / DTC / PPH), and the
+      national observed rate for each. Every raw column arrives as
+      text: rates become `double`, counts become `int`, via
+      `try_cast`. Grain: single row keyed by `country` (`Nation`).
+    columns:
+      - name: country
+        description: |
+          Always `Nation` in the current vintage; kept for
+          provenance.
+        data_tests:
+          - not_null
+      - name: quality_of_patient_care_star_rating
+        description: |
+          National average of the quality-of-patient-care star
+          rating; the star band percentages sum to ~100.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+
+  - name: stg_cms__hospice_general_information
+    description: |
+      Hospice General Information from CMS Care Compare (DKAN
+      dataset `yc9t-dgbk`). One row per Medicare-certified hospice
+      with directory columns (name, split address, city/state/ZIP,
+      county, telephone), CMS region, ownership type, and
+      Medicare-certification date. Every raw column arrives as
+      text: dates become `date` via `try_cast` and empty strings
+      collapse to `NULL`. Grain: `ccn`.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number, conformed as `upper(trim())`.
+          Hospice CCNs are six alphanumeric characters, some
+          carrying a letter in the third position (e.g. `05A123`).
+          Primary key — one row per hospice.
+        data_tests:
+          - not_null
+          - unique
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[0-9A-Z]{6}$"
+      - name: facility_name
+        description: "Hospice facility name (trimmed)."
+        data_tests:
+          - not_null
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros (raw `zip_code`).
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{5}$'
+      - name: ownership_type
+        description: "Ownership category, verbatim."
+      - name: certification_date
+        description: |
+          Date CMS certified the hospice for Medicare, parsed to
+          `date` via `try_cast`.
+
+  - name: stg_cms__hospice_provider_quality
+    description: |
+      Hospice Provider Data (HIS/HCI quality measures) from CMS
+      Care Compare (DKAN dataset `252m-zfp9`). One row per hospice
+      per HIS-based process measure or HCI (Hospice Care Index)
+      component. `score` is deliberately kept as text: HIS
+      percentages (e.g. `98.87`), HCI counts (e.g. `266`), and
+      percentile ranks all share the column, and casting is a mart
+      concern. `measure_date_range` is verbatim `MM/DD/YYYY -
+      MM/DD/YYYY` (values vary by measure family) — date parsing
+      also happens in marts, matching how the nursing-home MDS
+      staging keeps `measure_period` verbatim. Grain:
+      (`ccn`, `measure_code`).
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number of the hospice, conformed as
+          `upper(trim())`. Prospective foreign key to a future
+          `dim_hospice`; the FK relationship test will be added
+          when the dim lands.
+        data_tests:
+          - not_null
+      - name: measure_code
+        description: |
+          Measure identifier. Covers HIS process measures
+          (`H_001_01_OBSERVED` / `_DENOMINATOR`,
+          `H_012_XX_PERCENTILE`, etc.), HCI single-measure
+          components (`H_012_00_NUMBEROFCLAIMS`, `H_012_00_OBSERVED`)
+          and descriptive population/case-mix indicators
+          (`Average_Daily_Census`, `Bene_MA_Pct`,
+          `Care_Provided_Home`, `Pct_Pts_w_Cancer`, ...).
+        data_tests:
+          - not_null
+      - name: measure_name
+        description: "Human-readable measure name."
+        data_tests:
+          - not_null
+      - name: score
+        description: |
+          Measure value, verbatim string — units vary by
+          `measure_code` (count vs. percentage vs. percentile).
+          `NULL` when the source suppresses the score.
+      - name: measure_date_range
+        description: |
+          Measurement window, verbatim (e.g.
+          `01/01/2024 - 12/31/2024` or `10/01/2024 - 09/30/2025`;
+          the range depends on the measure family). Parsed in
+          marts.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ccn
+              - measure_code
+
+  - name: stg_cms__hospice_cahps_provider
+    description: |
+      Hospice CAHPS Survey — Provider Data from CMS Care Compare
+      (DKAN dataset `gxki-hrr8`). One row per hospice per CAHPS
+      composite for each response category (bottom-box / middle-box
+      / top-box, encoded in the `_BBV` / `_MBV` / `_TBV` suffix on
+      `measure_code`), plus a `SUMMARY_STAR_RATING` row that
+      carries a 1–5 star value in `star_rating` instead of a
+      percentage. `score` is a percentage string kept verbatim
+      (empty → `NULL`). Grain: (`ccn`, `measure_code`).
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number of the hospice, conformed as
+          `upper(trim())`. Prospective foreign key to a future
+          `dim_hospice`.
+        data_tests:
+          - not_null
+      - name: measure_code
+        description: |
+          CAHPS composite plus response-band suffix (`_BBV`,
+          `_MBV`, `_TBV`) or `SUMMARY_STAR_RATING`.
+        data_tests:
+          - not_null
+      - name: star_rating
+        description: |
+          Populated only for `SUMMARY_STAR_RATING` rows (1–5); all
+          others carry `Not Applicable` / `Not Available` in the
+          source which becomes `NULL` here via `try_cast`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: measure_date_range
+        description: |
+          CAHPS measurement window, verbatim (e.g.
+          `10/01/2023-09/30/2025`; a single value per vintage).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ccn
+              - measure_code
+
+  - name: stg_cms__hospice_cahps_national
+    description: |
+      Hospice CAHPS Survey — National Data from CMS Care Compare
+      (DKAN dataset `7cv8-v37d`). One row per CAHPS composite +
+      response-band (`_BBV` / `_MBV` / `_TBV`), with the national
+      bottom-/middle-/top-box percentage. Unlike the provider file
+      there is no `SUMMARY_STAR_RATING` row and no `star_rating`
+      column at the national grain. Grain: `measure_code`.
+    columns:
+      - name: measure_code
+        description: |
+          CAHPS composite plus response-band suffix (`_BBV`, `_MBV`,
+          `_TBV`).
+        data_tests:
+          - not_null
+          - unique
+      - name: measure_name
+        description: "Human-readable measure name."
+        data_tests:
+          - not_null
+      - name: score
+        description: |
+          National score for the measure, verbatim string — a
+          bottom-/middle-/top-box percentage for the `_BBV` /
+          `_MBV` / `_TBV` measure code.
+      - name: measure_date_range
+        description: |
+          CAHPS measurement window, verbatim (e.g.
+          `10/01/2023-09/30/2025`; a single value per vintage).
+
   - name: stg_cms__dataset_vintages
     description: |
       One row per extracted dataset with the upstream publication dates
