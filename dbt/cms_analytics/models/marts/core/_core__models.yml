@@ -375,12 +375,21 @@ models:
           `NULL` when not reported.
       - name: owner_count
         description: |
-          Distinct owner/manager names on the home's ownership file
-          across all roles (officers, directors, managing employees,
-          and ownership-interest holders alike). `0` for the 658
-          homes whose only ownership row is the
-          `Ownership Data Not Available` placeholder (null
-          `owner_name`), which is excluded from every rollup here.
+          `count(distinct owner_name)` across every role on the
+          home's ownership file — direct/indirect equity, general/
+          limited partnerships, mortgage- and security-interest
+          creditors, plus the non-equity control roles (officers,
+          directors, W-2 and contracted managing employees,
+          trustees, ADPs, governing-body members, "individual is an
+          owner, partner or trustee of any ADP of the SNF"). NOT the
+          sum of `direct_owner_count + indirect_owner_count +
+          creditor_count`: a single owner_name can appear under
+          multiple roles at the same home and is counted once here
+          but once per bucket it qualifies for, so the bucket sum
+          can exceed `owner_count`. `0` for the 658 homes whose
+          only ownership row is the `Ownership Data Not Available`
+          placeholder (null `owner_name`), which is excluded from
+          every rollup here.
         data_tests:
           - not_null
           - dbt_utils.accepted_range:
@@ -389,11 +398,18 @@ models:
                 inclusive: true
       - name: direct_owner_count
         description: |
-          Distinct owner names holding a direct ownership interest
-          (roles `5% OR GREATER DIRECT OWNERSHIP INTEREST` or
-          `DIRECT OWNERSHIP INTEREST`). `0` when the file lists no
-          direct owners — common for non-profit and government
-          homes.
+          Distinct owner names holding a direct equity interest in
+          the SNF's operating entity. Includes the two direct-
+          ownership roles (`5% OR GREATER DIRECT OWNERSHIP INTEREST`
+          and `DIRECT OWNERSHIP INTEREST`) *and* the two partnership
+          roles (`GENERAL PARTNERSHIP INTEREST`,
+          `LIMITED PARTNERSHIP INTEREST`) — a general or limited
+          partner is a direct equity holder, so folding them in
+          fixes a rollup that previously showed `0` for 139
+          partnership-only homes. `0` when the file lists no direct
+          or partnership owners — common for non-profit and
+          government homes. Disjoint from `indirect_owner_count`
+          and `creditor_count` at the role level.
         data_tests:
           - not_null
           - dbt_utils.accepted_range:
@@ -406,7 +422,24 @@ models:
           interest (roles
           `5% OR GREATER INDIRECT OWNERSHIP INTEREST` or
           `INDIRECT OWNERSHIP INTEREST`) — parent-entity stakes,
-          a rough proxy for holding-company depth.
+          a rough proxy for holding-company depth. Disjoint from
+          `direct_owner_count` and `creditor_count` at the role
+          level.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: creditor_count
+        description: |
+          Distinct names holding a secured-lender claim on the
+          SNF (roles `5% OR GREATER MORTGAGE INTEREST` or
+          `5% OR GREATER SECURITY INTEREST`). Creditors, not
+          equity owners — split out so they stay visible without
+          inflating `direct_owner_count`. `0` for the ~12,600
+          homes with no reported mortgage or security interest;
+          2,096 homes have at least one.
         data_tests:
           - not_null
           - dbt_utils.accepted_range:
@@ -415,17 +448,31 @@ models:
                 inclusive: true
       - name: largest_direct_owner_name
         description: |
-          Name of the direct owner with the largest reported
-          ownership percentage (ties broken alphabetically;
-          direct owners with no reported percentage sort last).
-          `NULL` for the ~4,700 homes with no direct-ownership rows.
-          This is the biggest *direct* stakeholder, not an
-          ultimate-parent rollup — the file names indirect owners
-          but doesn't chain them into an ownership tree.
+          Name of the direct-equity holder with the largest
+          reported ownership percentage. Candidate pool matches
+          `direct_owner_count`: the two direct-ownership roles
+          plus `GENERAL PARTNERSHIP INTEREST` and
+          `LIMITED PARTNERSHIP INTEREST`. Ties broken by
+          `ownership_percentage desc nulls last`, then
+          `owner_name` ascending. Partnership rows carry no
+          reported percentage upstream (0 of 1,210 partnership
+          rows), so a partner can never displace a direct owner
+          who reports a stake — `largest_direct_owner_pct` is
+          preserved on every CCN where the old pool produced one.
+          Widening the pool fills 139 previously-null names on
+          partnership-only homes and additionally reassigns 33
+          CCNs whose old winner also had `NULL` ownership_pct:
+          on those homes a partnership owner_name sorts ahead of
+          the old direct-role winner under the alphabetical
+          tiebreak. `NULL` for the ~4,600 homes with no direct or
+          partnership rows. This is the biggest *direct*
+          stakeholder, not an ultimate-parent rollup — the file
+          names indirect owners but doesn't chain them into an
+          ownership tree.
       - name: largest_direct_owner_type
         description: |
-          `Individual` or `Organization` for the largest direct
-          owner; `NULL` when there is none.
+          `Individual` or `Organization` for the largest direct-
+          equity holder; `NULL` when there is none.
         data_tests:
           - accepted_values:
               arguments:
@@ -434,10 +481,11 @@ models:
                   - Organization
       - name: largest_direct_owner_pct
         description: |
-          Reported ownership percentage of the largest direct owner
-          (whole-number percent, 5–100). `NULL` when no direct owner
-          reports a percentage (2,176 of the 9,952 homes with direct
-          owners).
+          Reported ownership percentage of the largest direct-
+          equity holder (whole-number percent, 5–100). `NULL`
+          when no direct-equity holder reports a percentage.
+          Partnership rows never carry a percentage upstream, so
+          on partnership-only homes this is always `NULL`.
         data_tests:
           - dbt_utils.accepted_range:
               arguments:

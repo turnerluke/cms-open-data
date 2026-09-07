@@ -14,6 +14,16 @@ owners as (
 
 ),
 
+-- Role buckets. `direct` includes partnership interests: a general
+-- or limited partner is a direct equity holder in the SNF's
+-- operating entity. Mortgage- and security-interest holders are
+-- creditors (secured lenders), not owners, and get their own
+-- `creditor_count` — they still count toward the superset
+-- `owner_count` because the source file lists them as ownership
+-- rows, but they are excluded from both direct and indirect equity
+-- buckets. All remaining roles (officers, directors, managing
+-- employees, trustees, ADPs, governing-body members) are non-equity
+-- control roles and only feed `owner_count`.
 ownership_rollup as (
 
     select
@@ -24,7 +34,9 @@ ownership_rollup as (
                 when
                     owner_role in (
                         '5% OR GREATER DIRECT OWNERSHIP INTEREST',
-                        'DIRECT OWNERSHIP INTEREST'
+                        'DIRECT OWNERSHIP INTEREST',
+                        'GENERAL PARTNERSHIP INTEREST',
+                        'LIMITED PARTNERSHIP INTEREST'
                     )
                     then owner_name
             end
@@ -38,16 +50,29 @@ ownership_rollup as (
                     )
                     then owner_name
             end
-        ) as indirect_owner_count
+        ) as indirect_owner_count,
+        count(
+            distinct case
+                when
+                    owner_role in (
+                        '5% OR GREATER MORTGAGE INTEREST',
+                        '5% OR GREATER SECURITY INTEREST'
+                    )
+                    then owner_name
+            end
+        ) as creditor_count
     from owners
     group by 1
 
 ),
 
--- One row per home: the direct owner with the largest reported
--- stake. Percentage sorts nulls last (2,176 winners still have no
--- reported percentage — homes where no direct owner reports one);
--- owner_name breaks ties deterministically.
+-- One row per home: the direct-equity holder with the largest
+-- reported stake. Partnership rows carry no ownership_percentage
+-- upstream (0 of 1,210 partnership rows report one), so widening
+-- the candidate pool doesn't change any pct values; it only fills
+-- 139 previously-null names on partnership-only CCNs (ties broken
+-- alphabetically). Percentage sorts nulls last so direct-interest
+-- holders with reported stakes always win over partners.
 largest_direct_owner as (
 
     select
@@ -59,7 +84,9 @@ largest_direct_owner as (
     where
         owner_role in (
             '5% OR GREATER DIRECT OWNERSHIP INTEREST',
-            'DIRECT OWNERSHIP INTEREST'
+            'DIRECT OWNERSHIP INTEREST',
+            'GENERAL PARTNERSHIP INTEREST',
+            'LIMITED PARTNERSHIP INTEREST'
         )
     qualify
         row_number() over (
@@ -126,6 +153,7 @@ final as (
         coalesce(ownership_rollup.owner_count, 0) as owner_count,
         coalesce(ownership_rollup.direct_owner_count, 0) as direct_owner_count,
         coalesce(ownership_rollup.indirect_owner_count, 0) as indirect_owner_count,
+        coalesce(ownership_rollup.creditor_count, 0) as creditor_count,
         largest_direct_owner.largest_direct_owner_name,
         largest_direct_owner.largest_direct_owner_type,
         largest_direct_owner.largest_direct_owner_pct,
