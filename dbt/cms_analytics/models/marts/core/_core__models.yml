@@ -198,3 +198,257 @@ models:
           the whole dimension comes from one snapshot.
         data_tests:
           - not_null
+
+  - name: dim_nursing_home
+    description: |
+      One row per Medicare/Medicaid-certified nursing home (CCN),
+      conformed from `stg_cms__nursing_home_provider_info` with an
+      ownership rollup from `stg_cms__nursing_home_ownership`. Keeps
+      the descriptive attributes (name, address, classification,
+      capacity, chain affiliation, star ratings, headline staffing
+      measures) at `dim_hospital`'s level of selectivity — the
+      detailed staffing, case-mix, inspection-cycle, and penalty
+      summary columns stay in staging for the Sprint C quality and
+      enforcement facts. The staging model already enforces one row
+      per CCN, so no deduplication is applied here. All five
+      nursing-home detail staging models (quality MDS/claims,
+      deficiencies, penalties, ownership) FK to this dimension's
+      `ccn` at error severity — the 2026-08 vintage has zero orphan
+      CCNs across all five.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number. Primary key — one row per
+          nursing home. Six alphanumeric characters; 247 homes carry
+          a letter in the third position (e.g. `05A027`), which is
+          the legitimate nursing-home CCN format, kept verbatim.
+        data_tests:
+          - not_null
+          - unique
+      - name: provider_name
+        description: "Nursing home's doing-business-as name."
+      - name: legal_business_name
+        description: "Nursing home's legal business name."
+      - name: address
+        description: "Street address of the nursing home."
+      - name: city
+        description: "City of the nursing home address."
+      - name: state
+        description: "Two-letter state or territory abbreviation."
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros.
+      - name: county
+        description: "County or parish of the nursing home address."
+      - name: telephone_number
+        description: "Nursing home telephone number."
+      - name: latitude
+        description: "Geocoded latitude of the nursing home."
+      - name: longitude
+        description: "Geocoded longitude of the nursing home."
+      - name: ownership_type
+        description: |
+          CMS ownership category (e.g.
+          `For profit - Limited Liability company`,
+          `Non profit - Corporation`, `Government - County`).
+      - name: provider_type
+        description: |
+          Certification category: `Medicare and Medicaid`,
+          `Medicare`, or `Medicaid`.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - Medicare and Medicaid
+                  - Medicare
+                  - Medicaid
+      - name: is_urban
+        description: "`TRUE` when CMS classifies the location as urban."
+      - name: resides_in_hospital
+        description: "`TRUE` when the home is physically inside a hospital."
+      - name: is_continuing_care_retirement_community
+        description: |
+          `TRUE` when the home is part of a continuing-care
+          retirement community.
+      - name: special_focus_status
+        description: |
+          `SFF` (Special Focus Facility — persistently poor
+          inspection record, under increased CMS scrutiny) or
+          `SFF Candidate`; `NULL` for the ~96% of homes with
+          neither designation.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - SFF
+                  - SFF Candidate
+      - name: first_approved_date
+        description: |
+          Date the home was first approved to provide Medicare and
+          Medicaid services.
+      - name: number_of_certified_beds
+        description: "Number of Medicare/Medicaid-certified beds."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: average_residents_per_day
+        description: "Average number of residents per day."
+      - name: chain_id
+        description: |
+          CMS chain identifier; `NULL` for independent homes.
+      - name: chain_name
+        description: |
+          Name of the chain the home belongs to; `NULL` for
+          independent homes.
+      - name: number_of_facilities_in_chain
+        description: |
+          Number of facilities in the home's chain; `NULL` for
+          independent homes.
+      - name: has_abuse_icon
+        description: |
+          `TRUE` when Care Compare flags the home with the abuse
+          icon (citations for abuse that led to or could have led
+          to resident harm).
+      - name: changed_ownership_in_last_12_months
+        description: "`TRUE` when the home changed ownership in the last year."
+      - name: overall_rating
+        description: |
+          CMS overall five-star rating, 1–5. `NULL` for ~127 homes
+          where CMS reports it as not available (too new, or data
+          suppressed — see the staging footnote column).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: health_inspection_rating
+        description: "Health-inspection five-star rating, 1–5; `NULL` when unavailable."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: qm_rating
+        description: "Quality-measure five-star rating, 1–5; `NULL` when unavailable."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: staffing_rating
+        description: "Staffing five-star rating, 1–5; `NULL` when unavailable."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: reported_total_nurse_staffing_hours_per_resident_per_day
+        description: |
+          Reported total nurse (RN + LPN + aide) staffing hours per
+          resident per day.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: reported_rn_staffing_hours_per_resident_per_day
+        description: "Reported RN staffing hours per resident per day."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_nursing_staff_turnover_pct
+        description: |
+          Percentage of nursing staff who left over a twelve-month
+          period; `NULL` when not reported.
+      - name: registered_nurse_turnover_pct
+        description: |
+          Percentage of RNs who left over a twelve-month period;
+          `NULL` when not reported.
+      - name: owner_count
+        description: |
+          Distinct owner/manager names on the home's ownership file
+          across all roles (officers, directors, managing employees,
+          and ownership-interest holders alike). `0` for the 658
+          homes whose only ownership row is the
+          `Ownership Data Not Available` placeholder (null
+          `owner_name`), which is excluded from every rollup here.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: direct_owner_count
+        description: |
+          Distinct owner names holding a direct ownership interest
+          (roles `5% OR GREATER DIRECT OWNERSHIP INTEREST` or
+          `DIRECT OWNERSHIP INTEREST`). `0` when the file lists no
+          direct owners — common for non-profit and government
+          homes.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: indirect_owner_count
+        description: |
+          Distinct owner names holding an indirect ownership
+          interest (roles
+          `5% OR GREATER INDIRECT OWNERSHIP INTEREST` or
+          `INDIRECT OWNERSHIP INTEREST`) — parent-entity stakes,
+          a rough proxy for holding-company depth.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: largest_direct_owner_name
+        description: |
+          Name of the direct owner with the largest reported
+          ownership percentage (ties broken alphabetically;
+          direct owners with no reported percentage sort last).
+          `NULL` for the ~4,700 homes with no direct-ownership rows.
+          This is the biggest *direct* stakeholder, not an
+          ultimate-parent rollup — the file names indirect owners
+          but doesn't chain them into an ownership tree.
+      - name: largest_direct_owner_type
+        description: |
+          `Individual` or `Organization` for the largest direct
+          owner; `NULL` when there is none.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - Individual
+                  - Organization
+      - name: largest_direct_owner_pct
+        description: |
+          Reported ownership percentage of the largest direct owner
+          (whole-number percent, 5–100). `NULL` when no direct owner
+          reports a percentage (2,176 of the 9,952 homes with direct
+          owners).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: as_of
+        description: |
+          Snapshot vintage: the upstream `modified` date CMS reported
+          for the Nursing Home Provider Information file at capture
+          time (from `stg_cms__dataset_vintages`). Constant across
+          rows — the whole dimension comes from one snapshot.
+        data_tests:
+          - not_null
