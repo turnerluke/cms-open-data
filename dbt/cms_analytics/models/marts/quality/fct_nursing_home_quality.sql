@@ -11,7 +11,23 @@ with mds as (
         four_quarter_average_score as score,
         four_quarter_average_score_footnote as score_footnote,
         used_in_five_star_rating,
-        measure_period,
+        -- MDS ships the reporting window as a quarter range like
+        -- `2025Q2-2026Q1`; expand into calendar dates so this fact
+        -- mirrors `fct_hospital_quality` (`start_date`/`end_date`).
+        -- Strict `make_date` on substring slices: a malformed value
+        -- errors at build time rather than silently becoming NULL.
+        make_date(
+            cast(substr(measure_period, 1, 4) as int),
+            (cast(substr(measure_period, 6, 1) as int) - 1) * 3 + 1,
+            1
+        ) as period_start_date,
+        last_day(
+            make_date(
+                cast(substr(measure_period, 8, 4) as int),
+                cast(substr(measure_period, 13, 1) as int) * 3,
+                1
+            )
+        ) as period_end_date,
         -- per-source snapshot vintage: upstream `modified` date of
         -- each source file, kept as the last column in every branch so
         -- the union stays positionally aligned
@@ -37,7 +53,13 @@ claims as (
         adjusted_score as score,
         score_footnote,
         used_in_five_star_rating,
-        measure_period,
+        -- claims ships the reporting window as `YYYYMMDD-YYYYMMDD`;
+        -- `strptime` is strict, so a malformed value errors rather
+        -- than becoming NULL
+        cast(strptime(substr(measure_period, 1, 8), '%Y%m%d') as date)
+            as period_start_date,
+        cast(strptime(substr(measure_period, 10, 8), '%Y%m%d') as date)
+            as period_end_date,
         (
             select vintages.modified
             from {{ ref('stg_cms__dataset_vintages') }} as vintages

@@ -224,16 +224,34 @@ models:
           `Y`/`N` mapped to boolean in staging).
         data_tests:
           - not_null
-      - name: measure_period
+      - name: period_start_date
         description: |
-          Reporting period the score covers, verbatim from the
-          source; the format differs by `measure_source` — a quarter
-          range (`2025Q2-2026Q1`) for `mds`, a `YYYYMMDD-YYYYMMDD`
-          date range for `claims`. Each source ships one snapshot per
-          measure, so the period is an attribute of the row, not part
-          of the grain.
+          First day of the measurement period. Parsed in the fact from
+          the source's verbatim period string: for `mds` rows a
+          quarter range like `2025Q2-2026Q1` (first day of the first
+          quarter), for `claims` rows a `YYYYMMDD-YYYYMMDD` range.
+          Each source ships one snapshot per measure, so the period
+          is an attribute of the row, not part of the grain.
         data_tests:
           - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: "'2020-01-01'"
+                max_value: "'2030-01-01'"
+                inclusive: true
+      - name: period_end_date
+        description: |
+          Last day of the measurement period. For `mds` rows this is
+          the last day of the second quarter in the source's quarter
+          range (e.g. `2025Q2-2026Q1` -> 2026-03-31); for `claims`
+          rows it is the second `YYYYMMDD` in the source range.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: "'2020-01-01'"
+                max_value: "'2030-01-01'"
+                inclusive: true
       - name: as_of
         description: |
           Snapshot vintage of the row's source dataset: the upstream
@@ -249,6 +267,9 @@ models:
             combination_of_columns:
               - ccn
               - measure_code
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "period_start_date <= period_end_date"
 
   - name: fct_nursing_home_enforcement
     description: |
