@@ -101,6 +101,41 @@ override the dirty-tree check.
 scripts/worktree-drop.sh nh-fines-chart
 ```
 
+## PR watcher
+
+[`scripts/watch-pr.sh <pr-number> [--ci-only]`](../scripts/watch-pr.sh)
+replaces the hand-written background one-liner orchestration sessions
+used to babysit an open PR. It polls `gh pr checks` every 20s until
+every check has settled, then (unless `--ci-only`) polls
+`gh pr view --json state` every 30s until the PR is no longer open.
+
+```bash
+bash scripts/watch-pr.sh 123           # watch CI, then merge state
+bash scripts/watch-pr.sh 123 --ci-only # exit as soon as CI is green
+```
+
+The markers below are machine-readable and stable, since agents grep
+for them in the background-task log:
+
+| marker        | meaning                             |
+| ------------- | ----------------------------------- |
+| `CI_PASS`     | every check is `pass` or `skipping` |
+| `CI_FAIL`     | at least one check is failing now   |
+| `MERGED <ts>` | PR merged (ISO timestamp)           |
+| `CLOSED`      | PR closed without merging           |
+
+Markers are cumulative rather than mutually exclusive: a full-mode run
+can legitimately print `CI_FAIL`, then `CI_PASS` and `MERGED <ts>` once
+a fix lands, or `CI_FAIL` followed by `CLOSED`. The last marker
+printed is authoritative.
+
+The watcher is re-run aware: after `CI_FAIL` it loops back into the
+pending-wait phase, so a follow-up fix push that re-triggers CI is
+picked up automatically. Only fully-green CI (or the PR closing)
+leaves the CI phase. Status classification parses the tab-separated
+status column of `gh pr checks` rather than substring-matching, so a
+check whose name contains `pass` isn't misread.
+
 ## Ralph loops
 
 [`scripts/ralph/`](../scripts/ralph/README.md) is a maintainer-only
