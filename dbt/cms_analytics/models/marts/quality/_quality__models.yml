@@ -124,3 +124,128 @@ models:
               - ccn
               - measure_domain
               - measure_id
+
+  - name: fct_nursing_home_quality
+    description: |
+      Nursing home quality measures in long format, unioned from the
+      MDS-based and Medicare-claims-based measure staging models with
+      a `measure_source` discriminator. Grain: (`ccn`,
+      `measure_code`) — one row per nursing home per measure. The two
+      files use disjoint code ranges (MDS `401`–`481`, claims
+      `521`–`552`), so `measure_source` is an attribute derivable
+      from the code, not part of the grain; the uniqueness test on
+      (`ccn`, `measure_code`) will flag any future vintage that
+      breaks that assumption.
+
+      Modeling choices to be aware of:
+
+      - `score` semantics vary by source (see the column
+        description): the value is only comparable **within** a
+        `measure_code`, never across measures.
+      - Rows whose `score` is `NULL` (suppressed upstream) are
+        **kept**, so measure coverage per nursing home stays
+        analyzable — count non-null scores to measure participation.
+      - Only the headline score is carried: the four-quarter average
+        for MDS measures and the risk-adjusted score for claims
+        measures. The MDS quarterly scores/footnotes and the claims
+        observed/expected components stay in staging.
+      - Nursing home name/address attributes are not inlined; join
+        `dim_nursing_home` on `ccn` for them.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number of the nursing home. Foreign key
+          to `dim_nursing_home`, enforced at error severity — the
+          2026-08 vintage has zero orphan CCNs (all six nursing-home
+          files come from the same Care Compare snapshot). A failure
+          means the snapshots have desynchronized — compare `as_of`
+          across sources against `dim_nursing_home.as_of` — and the
+          weekly build should fail rather than publish quality rows
+          that join to no home.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_nursing_home')
+                field: ccn
+      - name: measure_source
+        description: |
+          Which Care Compare measure file the row comes from: `mds`
+          (Minimum Data Set assessments) or `claims` (Medicare
+          claims).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - mds
+                  - claims
+      - name: measure_code
+        description: |
+          Numeric CMS measure code kept as text (e.g. `401`, `521`).
+          Unique per nursing home across both sources.
+        data_tests:
+          - not_null
+      - name: measure_name
+        description: |
+          Human-readable measure description (staging
+          `measure_description`), e.g. "Percentage of long-stay
+          residents with a urinary tract infection".
+      - name: resident_type
+        description: "`Long Stay` or `Short Stay`."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Long Stay", "Short Stay"]
+      - name: score
+        description: |
+          Headline measure result; `NULL` when CMS suppresses the
+          value (flagged in `score_footnote`). Semantics depend on
+          the source:
+
+          - `mds`: four-quarter average of the quarterly scores, a
+            percentage (0–100).
+          - `claims`: risk-adjusted score — a percentage for the
+            short-stay measures (`521`, `522`), a rate per 1,000
+            long-stay resident days for `551` and `552`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: score_footnote
+        description: |
+          CMS footnote code explaining a missing or qualified
+          `score`; `NULL` when no footnote applies.
+      - name: used_in_five_star_rating
+        description: |
+          Whether the measure feeds the QM five-star rating (raw
+          `Y`/`N` mapped to boolean in staging).
+        data_tests:
+          - not_null
+      - name: measure_period
+        description: |
+          Reporting period the score covers, verbatim from the
+          source; the format differs by `measure_source` — a quarter
+          range (`2025Q2-2026Q1`) for `mds`, a `YYYYMMDD-YYYYMMDD`
+          date range for `claims`. Each source ships one snapshot per
+          measure, so the period is an attribute of the row, not part
+          of the grain.
+        data_tests:
+          - not_null
+      - name: as_of
+        description: |
+          Snapshot vintage of the row's source dataset: the upstream
+          `modified` date CMS reported for that measure file at
+          capture time (from `stg_cms__dataset_vintages`). May vary
+          by `measure_source` — the two files are not republished in
+          lockstep (in the current vintage both share one date).
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ccn
+              - measure_code
