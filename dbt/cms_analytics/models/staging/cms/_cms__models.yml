@@ -1333,11 +1333,20 @@ models:
       - name: ccn
         description: |
           CMS Certification Number of the hospice, conformed as
-          `upper(trim())`. Prospective foreign key to a future
-          `dim_hospice`; the FK relationship test will be added
-          when the dim lands.
+          `upper(trim())`. Foreign key to `dim_hospice`, enforced
+          at error severity — the 2026-08 vintage has zero orphan
+          CCNs (this file and the hospice general-information file
+          come from the same Care Compare snapshot pair, unlike the
+          hospital claims facts). A failure means the snapshots
+          have desynchronized — compare the hospice rows of
+          `stg_cms__dataset_vintages` — and the build should fail
+          rather than publish detail rows that join to no hospice.
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_hospice')
+                field: ccn
       - name: measure_code
         description: |
           Measure identifier. Covers HIS process measures
@@ -1385,10 +1394,15 @@ models:
       - name: ccn
         description: |
           CMS Certification Number of the hospice, conformed as
-          `upper(trim())`. Prospective foreign key to a future
-          `dim_hospice`.
+          `upper(trim())`. Foreign key to `dim_hospice`, enforced
+          at error severity — the 2026-08 vintage has zero orphan
+          CCNs.
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_hospice')
+                field: ccn
       - name: measure_code
         description: |
           CAHPS composite plus response-band suffix (`_BBV`,

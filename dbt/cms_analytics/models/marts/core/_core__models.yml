@@ -500,3 +500,222 @@ models:
           rows — the whole dimension comes from one snapshot.
         data_tests:
           - not_null
+
+  - name: dim_home_health_agency
+    description: |
+      One row per Medicare-certified home-health agency (CCN),
+      conformed from `stg_cms__home_health_care_agencies`. Keeps
+      directory attributes (name, address, ownership), the six
+      `offers_*` service booleans, and the Care Compare overall
+      quality-of-patient-care star rating (with its footnote); the
+      ~40 wide OASIS / DTC / PPR / PPH measure columns stay in
+      staging for a follow-up long-format home-health quality fact,
+      matching the split `dim_nursing_home` uses. The staging model
+      already enforces one row per CCN (12,460 in the 2026-05
+      vintage), so no deduplication is applied here. CMS does not
+      publish a home-health ownership file, so — unlike
+      `dim_nursing_home` — this dim carries no ownership rollup.
+      `certification_date` is parsed from the CMS `MM/DD/YYYY` text
+      at staging (fixing a `try_cast` bug that silently returned
+      NULL for every row in PR #120) and carried through here.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number. Primary key — one row per
+          agency. Six alphanumeric characters (some carry a letter
+          in the third position, e.g. `07A001`); shares no values
+          with the hospital or nursing-home CCN namespaces in this
+          warehouse.
+        data_tests:
+          - not_null
+          - unique
+      - name: provider_name
+        description: "Home-health agency name."
+      - name: address
+        description: "Street address of the agency."
+      - name: city
+        description: "City of the agency address."
+      - name: state
+        description: "Two-letter state or territory abbreviation."
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros.
+      - name: telephone_number
+        description: "Agency telephone number."
+      - name: ownership_type
+        description: |
+          CMS ownership category: `PROPRIETARY` (~72%), `NON-PROFIT`
+          (~8%), or `GOVERNMENT OPERATED` (~2%). `NULL` for the
+          ~17% of agencies whose source row carries a `-` sentinel
+          (nullified here) — nearly all of those rows (2,154 of
+          2,157 in the 2026-05 vintage) also have every `offers_*`
+          flag null, so treat them as directory-only records with
+          little or no operating detail.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - PROPRIETARY
+                  - NON-PROFIT
+                  - GOVERNMENT OPERATED
+      - name: certification_date
+        description: |
+          Date the agency was first Medicare-certified, parsed at
+          staging from the CMS `MM/DD/YYYY` string. Ranges from
+          1966-07-01 (195 legacy rows that CMS backdates to the
+          Medicare program's launch) through 2025-12-26 in the
+          2026-05 vintage. `NULL` for the single agency whose
+          source row carries a `-` sentinel.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: "'1966-01-01'"
+                max_value: "'2027-01-01'"
+                inclusive: true
+      - name: offers_nursing_care
+        description: |
+          `TRUE` when the agency offers nursing-care services;
+          `NULL` for the ~17% of agencies whose source row lists the
+          `-` sentinel for every service flag.
+      - name: offers_physical_therapy
+        description: "`TRUE` when the agency offers physical therapy."
+      - name: offers_occupational_therapy
+        description: "`TRUE` when the agency offers occupational therapy."
+      - name: offers_speech_pathology
+        description: "`TRUE` when the agency offers speech pathology."
+      - name: offers_medical_social_services
+        description: "`TRUE` when the agency offers medical social services."
+      - name: offers_home_health_aide
+        description: "`TRUE` when the agency offers home-health aide services."
+      - name: quality_of_patient_care_star_rating
+        description: |
+          Care Compare overall quality-of-patient-care star rating,
+          1.0-5.0 in 0.5-star increments. `NULL` for ~35% of
+          agencies where CMS reports it as not available (too new,
+          insufficient episodes, or data suppressed — see
+          `quality_of_patient_care_star_rating_footnote`).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: quality_of_patient_care_star_rating_footnote
+        description: |
+          CMS footnote explaining why a star rating is `NULL`
+          (small denominator, new agency, etc.); `NULL` when a
+          rating is published.
+      - name: as_of
+        description: |
+          Snapshot vintage: the upstream `modified` date CMS
+          reported for the Home Health Care Agencies file at
+          capture time (from `stg_cms__dataset_vintages`).
+          Constant across rows — the whole dimension comes from
+          one snapshot.
+        data_tests:
+          - not_null
+
+  - name: dim_hospice
+    description: |
+      One row per Medicare-certified hospice (CCN), conformed from
+      `stg_cms__hospice_general_information`. Keeps directory
+      attributes (name, address, county, telephone, CMS region) and
+      the flat `ownership_type` field the source publishes; the
+      HIS/HCI quality measures and the CAHPS summary star rating
+      live in the two long-format staging tables and belong on a
+      follow-up hospice quality fact, matching the split
+      `dim_nursing_home` uses. The staging model already enforces
+      one row per CCN (6,669 in the 2026-08 vintage), so no
+      deduplication is applied here. CMS does not publish a hospice
+      ownership file, so — unlike `dim_nursing_home` — this dim
+      carries no ownership rollup. `certification_date` is parsed
+      from the CMS `MM/DD/YYYY` text at staging (fixing a `try_cast`
+      bug that silently returned NULL for every row in PR #120) and
+      carried through here.
+      Both hospice detail staging models (`stg_cms__hospice_provider_quality`,
+      `stg_cms__hospice_cahps_provider`) FK to this dim's `ccn` at
+      error severity — the 2026-08 vintage has zero orphan CCNs
+      across both files.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number. Primary key — one row per
+          hospice. Six alphanumeric characters (some carry a letter
+          in the third position, e.g. `05A123`); shares no values
+          with the hospital, nursing-home, or home-health CCN
+          namespaces in this warehouse.
+        data_tests:
+          - not_null
+          - unique
+      - name: facility_name
+        description: "Hospice facility name."
+      - name: address_line_1
+        description: "Primary street-address line."
+      - name: address_line_2
+        description: |
+          Secondary address line (suite, floor). `NULL` for the
+          ~99.8% of hospices with no second line.
+      - name: city
+        description: "City of the hospice address."
+      - name: state
+        description: "Two-letter state or territory abbreviation."
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros.
+      - name: county
+        description: "County or parish of the hospice address."
+      - name: telephone_number
+        description: "Hospice telephone number."
+      - name: cms_region
+        description: |
+          CMS operational region, `1`-`10` as a string. The
+          per-region row counts skew heavily toward Region 9
+          (~35% of hospices) and Region 6 (~21%), reflecting the
+          concentration of hospice providers in the western and
+          south-central US.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+      - name: ownership_type
+        description: |
+          Ownership category: `For-Profit` (~57%), `Non-Profit`
+          (~13%), `Other` (~6%), `Government` (~1%), or
+          `Combination Government & Non-Profit` (<1%). `NULL` for
+          the ~23% of hospices whose source row publishes an empty
+          string (nullified here). Unlike the nursing-home file,
+          CMS ships this as a single flat column with no ownership
+          rollup.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - For-Profit
+                  - Non-Profit
+                  - Government
+                  - Other
+                  - Combination Government & Non-Profit
+      - name: certification_date
+        description: |
+          Date the hospice was first Medicare-certified, parsed at
+          staging from the CMS `MM/DD/YYYY` string. Ranges from
+          1983-11-01 through 2026-01-19 in the 2026-08 vintage;
+          every row is populated.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: "'1983-01-01'"
+                max_value: "'2027-01-01'"
+                inclusive: true
+      - name: as_of
+        description: |
+          Snapshot vintage: the upstream `modified` date CMS
+          reported for the Hospice General Information file at
+          capture time (from `stg_cms__dataset_vintages`).
+          Constant across rows — the whole dimension comes from
+          one snapshot.
+        data_tests:
+          - not_null
