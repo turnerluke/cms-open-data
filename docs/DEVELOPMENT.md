@@ -70,6 +70,37 @@ The agent-facing configuration is checked in and public:
     The intended loop is implement in a worktree → adversarial review →
     address findings → orchestrator opens the PR → poll CI to green.
 
+## Worktree lifecycle scripts
+
+The repo is checked out as a bare-repo worktree container so multiple
+branches live side-by-side as sibling directories (`main/`,
+`<feature>/`, …). [`scripts/worktree-new.sh`](../scripts/worktree-new.sh)
+and [`scripts/worktree-drop.sh`](../scripts/worktree-drop.sh) automate
+the four-step create/destroy incantation the maintainer would otherwise
+run by hand for each sprint.
+
+`worktree-new.sh <name> [branch]` creates a sibling worktree branched
+from the current tip of `main`, rsyncs `main/data/raw/` into it so
+dbt/Dagster don't re-download CMS extracts, runs
+`uv sync --all-packages --all-groups`, and runs `dbt deps` in
+`dbt/cms_analytics/`. Branch defaults to `feat/<name>`.
+
+```bash
+scripts/worktree-new.sh nh-fines-chart
+scripts/worktree-new.sh nh-fines-chart fix/nh-fines-chart
+```
+
+`worktree-drop.sh <name>` fast-forwards `main/`, removes the worktree,
+and force-deletes its branch from the bare repo (force is required
+because PRs squash-merge, so branches never look "merged" locally). It
+refuses to drop `main` or a worktree with uncommitted tracked changes;
+untracked build artifacts like `.venv/` are ignored. Pass `--force` to
+override the dirty-tree check.
+
+```bash
+scripts/worktree-drop.sh nh-fines-chart
+```
+
 ## Ralph loops
 
 [`scripts/ralph/`](../scripts/ralph/README.md) is a maintainer-only
