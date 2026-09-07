@@ -116,8 +116,18 @@ models:
           - not_null
       - name: manufacturer_name
         description: |
-          Manufacturer name (trimmed `Mftr_Name`), or `'Overall'` for
-          the roll-up row aggregating all manufacturers of the drug.
+          Manufacturer name (trimmed `Mftr_Name`; empty strings become
+          `NULL`; the trailing-`*` aggregate marker is stripped — see
+          `is_manufacturer_aggregate`), or `'Overall'` for the roll-up
+          row aggregating all manufacturers of the drug.
+        data_tests:
+          - not_null
+      - name: is_manufacturer_aggregate
+        description: |
+          `TRUE` when the source starred the manufacturer name, i.e.
+          the row's spending estimates aggregate multiple
+          manufacturers' versions of the drug. Distinct from the
+          `'Overall'` roll-up row, which is never starred.
         data_tests:
           - not_null
       - name: total_manufacturers
