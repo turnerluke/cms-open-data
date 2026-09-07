@@ -249,3 +249,184 @@ models:
             combination_of_columns:
               - ccn
               - measure_code
+
+  - name: fct_nursing_home_enforcement
+    description: |
+      Nursing home enforcement actions in long format, unioned from
+      the health-deficiency and penalty staging models with an
+      `action_type` discriminator. Grain: (`ccn`, `action_type`,
+      `action_date`, `detail_key`) — one row per deficiency citation
+      or penalty. `action_date` conforms the two event dates
+      (`survey_date` / `penalty_date`); `detail_key` conforms the
+      per-type disambiguators (tag vs. fine id) so the grain test
+      stays a single four-column uniqueness check.
+
+      Modeling choices to be aware of:
+
+      - The two event types keep their own detail columns rather
+        than being forced into shared ones: deficiency columns are
+        `NULL` on penalty rows and vice versa, enforced by the
+        model-level `expression_is_true` tests. Only `ccn`,
+        `action_type`, `action_date`, `detail_key`, and `as_of` are
+        conformed.
+      - Deficiency `correction_date` can precede `action_date` for
+        5,338 rows — corrections made during the inspection window,
+        a documented source quirk passed through unchanged.
+      - Source-specific extras that don't earn a mart column stay in
+        staging: deficiency `survey_type`, `deficiency_category`,
+        `correction_status`, `inspection_cycle`, the
+        infection-control and IDR/IIDR flags, and both files'
+        provider name/address blocks (join `dim_nursing_home` on
+        `ccn` for facility attributes).
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number of the nursing home. Foreign key
+          to `dim_nursing_home`, enforced at error severity — the
+          2026-08 vintage has zero orphan CCNs (all six nursing-home
+          files come from the same Care Compare snapshot). A failure
+          means the snapshots have desynchronized — compare `as_of`
+          across `action_type` against `dim_nursing_home.as_of` —
+          and the weekly build should fail rather than publish
+          enforcement rows that join to no home.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_nursing_home')
+                field: ccn
+      - name: action_type
+        description: |
+          Which enforcement file the row comes from: `deficiency`
+          (health inspection citation) or `penalty` (fine or
+          Medicare payment denial).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - deficiency
+                  - penalty
+      - name: action_date
+        description: |
+          Date of the enforcement action: the inspection
+          `survey_date` for deficiencies, the `penalty_date` for
+          penalties.
+        data_tests:
+          - not_null
+      - name: detail_key
+        description: |
+          Per-type disambiguator completing the grain within (`ccn`,
+          `action_type`, `action_date`): `deficiency_prefix` +
+          `deficiency_tag` (e.g. `F0684`) for deficiencies;
+          `fine_id` for fines and the literal `Payment Denial` for
+          payment denials (which carry no id — at most one per home
+          per date in the current vintage, per the staging grain).
+        data_tests:
+          - not_null
+      - name: deficiency_prefix
+        description: |
+          Regulation-set prefix of the cited tag (`F` for every row
+          in the current vintage); `NULL` on `penalty` rows.
+      - name: deficiency_tag
+        description: |
+          Zero-padded four-digit deficiency tag number ("F-tag"),
+          kept as text; `NULL` on `penalty` rows.
+      - name: deficiency_description
+        description: |
+          Short description of the requirement the home failed to
+          meet; `NULL` on `penalty` rows.
+      - name: scope_severity_code
+        description: |
+          CMS scope/severity letter, `A` (least serious) through `L`
+          (most serious); `NULL` on `penalty` rows.
+      - name: is_standard_deficiency
+        description: |
+          Whether the citation arose from a standard survey; `NULL`
+          on `penalty` rows.
+      - name: is_complaint_deficiency
+        description: |
+          Whether the citation arose from a complaint inspection;
+          `NULL` on `penalty` rows. Not mutually exclusive with
+          `is_standard_deficiency`.
+      - name: correction_date
+        description: |
+          Date the deficiency was corrected; `NULL` when no
+          correction date exists yet and on `penalty` rows. Can
+          precede `action_date` (5,338 rows) — corrections made
+          during the inspection window, a documented source quirk.
+      - name: penalty_type
+        description: |
+          `Fine` or `Payment Denial`; `NULL` on `deficiency` rows.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["Fine", "Payment Denial"]
+      - name: fine_id
+        description: |
+          CMS fine identifier, kept as text; `NULL` on
+          `Payment Denial` and `deficiency` rows.
+      - name: fine_amount
+        description: |
+          Fine amount in dollars (`decimal(12,2)`); `NULL` on
+          `Payment Denial` and `deficiency` rows.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: payment_denial_start_date
+        description: |
+          Start date of the Medicare payment denial; `NULL` on
+          `Fine` and `deficiency` rows.
+      - name: payment_denial_length_in_days
+        description: |
+          Length of the payment denial in days; `NULL` on `Fine`
+          and `deficiency` rows.
+      - name: as_of
+        description: |
+          Snapshot vintage of the row's source dataset: the upstream
+          `modified` date CMS reported for that enforcement file at
+          capture time (from `stg_cms__dataset_vintages`). May vary
+          by `action_type` — the two files are not republished in
+          lockstep (in the current vintage both share one date).
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ccn
+              - action_type
+              - action_date
+              - detail_key
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (action_type = 'deficiency')
+              = (deficiency_tag is not null)
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (action_type = 'penalty')
+              = (penalty_type is not null)
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (coalesce(penalty_type, '') = 'Fine')
+              = (fine_amount is not null)
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (coalesce(penalty_type, '') = 'Fine')
+              = (fine_id is not null)
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (coalesce(penalty_type, '') = 'Payment Denial')
+              = (payment_denial_start_date is not null)
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (coalesce(penalty_type, '') = 'Payment Denial')
+              = (payment_denial_length_in_days is not null)
