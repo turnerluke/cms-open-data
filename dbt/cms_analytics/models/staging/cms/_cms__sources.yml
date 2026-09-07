@@ -73,6 +73,26 @@ sources:
           Hospice General Information from Care Compare (DKAN dataset
           `yc9t-dgbk`). Landed by the `cms_hospice_general_information`
           Dagster asset.
+      - name: cms_home_health_national
+        description: |
+          Home Health Care — National Data from Care Compare (DKAN dataset
+          `97z8-de96`). Landed by the `cms_home_health_national` Dagster
+          asset.
+      - name: cms_hospice_provider_quality
+        description: |
+          Hospice — Provider Data (HIS/HCI quality measures) from Care
+          Compare (DKAN dataset `252m-zfp9`). Landed by the
+          `cms_hospice_provider_quality` Dagster asset.
+      - name: cms_hospice_cahps_provider
+        description: |
+          Hospice Care — Provider CAHPS Hospice Survey Data from Care
+          Compare (DKAN dataset `gxki-hrr8`). Landed by the
+          `cms_hospice_cahps_provider` Dagster asset.
+      - name: cms_hospice_cahps_national
+        description: |
+          Hospice Care — National CAHPS Hospice Survey Data from Care
+          Compare (DKAN dataset `7cv8-v37d`). Landed by the
+          `cms_hospice_cahps_national` Dagster asset.
       - name: cms_dialysis_facility_listing
         description: |
           Dialysis Facility Listing by Facility (DKAN dataset `23ew-n7w9`).
