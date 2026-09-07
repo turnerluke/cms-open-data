@@ -53,6 +53,22 @@ The agent-facing configuration is checked in and public:
   — runs that reviewer on every PR, gated on the `Code Quality Check`
   and `Test` workflows succeeding first so review effort isn't spent
   on code that deterministic checks already reject.
+- [`.claude/agents/`](../.claude/agents/) — two custom sub-agent
+  definitions codifying the sprint workflow that produced ~20 PRs
+  across four sprints, so orchestration sessions don't re-derive the
+  same brief every time:
+
+    - [`implementer.md`](../.claude/agents/implementer.md) — builds
+      one PR-sized change in a dedicated worktree, runs the local
+      gates, and returns a ready-to-paste PR title and body. Makes
+      exactly one commit; does not push or open the PR.
+    - [`adversarial-reviewer.md`](../.claude/agents/adversarial-reviewer.md)
+      — given the resulting commit SHA, independently re-verifies each
+      claim against real data and returns an `APPROVE` / `NEEDS FIXES`
+      verdict with bucketed findings. Read-only; never edits files.
+
+    The intended loop is implement in a worktree → adversarial review →
+    address findings → orchestrator opens the PR → poll CI to green.
 
 ## Ralph loops
 
