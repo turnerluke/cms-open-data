@@ -17,6 +17,9 @@ with dbt on DuckDB from CMS public datasets.
   discharge by star rating, with case mix as the confounder.
 - [Prescribers](/prescribers) — who drives spending on the top Part D
   drugs: specialties, top-1% concentration, and billed-vs-gross cost.
+- [Nursing homes](/nursing-homes) — star ratings, ownership, quality
+  measures, and health-inspection enforcement for certified nursing
+  homes.
 
 ## Warehouse coverage
 
@@ -52,6 +55,24 @@ select
     total_rows,
     'snapshot as of ' || cast(as_of as varchar)
 from cms.prescriber_stats
+union all
+select
+    'dim_nursing_home',
+    facilities,
+    cast(states as varchar) || ' states'
+from cms.nursing_home_stats
+union all
+select
+    'fct_nursing_home_quality',
+    quality_rows,
+    cast(quality_measures as varchar) || ' measures'
+from cms.nursing_home_stats
+union all
+select
+    'fct_nursing_home_enforcement',
+    enforcement_rows,
+    'snapshot as of ' || cast(enforcement_as_of as varchar)
+from cms.nursing_home_stats
 union all
 select
     'dim_hospital',
