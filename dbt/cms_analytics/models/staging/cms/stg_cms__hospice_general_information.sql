@@ -28,7 +28,14 @@ renamed as (
 
         -- classification
         trim(ownership_type) as ownership_type,
-        try_cast(certification_date as date) as certification_date
+        -- CMS ships this as `MM/DD/YYYY` text; `try_cast(... as date)`
+        -- silently returns NULL for that format, so parse with
+        -- `strptime` instead. Every value in the current vintage is
+        -- well-formed; guard against empty strings defensively so a
+        -- future publish doesn't crash the build.
+        cast(
+            strptime(nullif(trim(certification_date), ''), '%m/%d/%Y') as date
+        ) as certification_date
 
     from source
 

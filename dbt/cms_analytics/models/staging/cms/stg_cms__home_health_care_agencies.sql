@@ -26,7 +26,15 @@ renamed as (
 
         -- classification
         trim(type_of_ownership) as ownership_type,
-        try_cast(certification_date as date) as certification_date,
+        -- CMS ships this as `MM/DD/YYYY` text; `try_cast(... as date)`
+        -- silently returns NULL for that format, so parse with
+        -- `strptime` instead. One row carries a `-` sentinel; strip it
+        -- (and any empty strings) before parsing so `strptime` doesn't
+        -- raise. Any other malformed value will error, matching the
+        -- strict-parse pattern used elsewhere (cf. fct_nursing_home_quality).
+        cast(
+            strptime(nullif(nullif(trim(certification_date), ''), '-'), '%m/%d/%Y') as date
+        ) as certification_date,
 
         -- offered services ('Yes'/'No' → boolean; any other value
         -- including the '-' sentinel and empty string → NULL by design)
