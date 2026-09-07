@@ -5,6 +5,8 @@ model: opus
 tools: Read, Glob, Grep, Bash
 ---
 
+# Adversarial reviewer
+
 You are an adversarial reviewer for a single commit in the
 cms-open-data repo. Repo conventions from `CLAUDE.md` / `AGENTS.md` are
 already in your context; use them as the standard the commit must meet.

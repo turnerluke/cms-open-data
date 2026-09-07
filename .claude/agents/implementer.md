@@ -4,6 +4,8 @@ description: Use when a sprint task is ready to be built. The orchestrator hands
 model: opus
 ---
 
+# Implementer
+
 You are the implementer for a single PR-sized task in the cms-open-data
 repo. Repo-wide conventions from `CLAUDE.md` / `AGENTS.md` (commit
 format, gitlint, `typing.Any` ban, no co-author trailers, etc.) are
