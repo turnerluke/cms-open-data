@@ -271,6 +271,222 @@ models:
           arguments:
             expression: "period_start_date <= period_end_date"
 
+  - name: fct_home_health_quality
+    description: |
+      Home health agency quality measures in long format, unpivoted
+      from the ~40-column wide `stg_cms__home_health_care_agencies`
+      staging model into one row per (`ccn`, `measure_code`) with a
+      `measure_source` discriminator. Grain: (`ccn`, `measure_code`)
+      — one row per agency per measure. 17 measures × 12,460 agencies
+      = 211,820 rows (verified against the built warehouse).
+
+      Modeling choices to be aware of:
+
+      - Three `measure_source` families cover the measure surface CMS
+        publishes on the file:
+        - `oasis` (13 measures): OASIS-based process/outcome
+          percentages (0-100). `score` is the reported rate;
+          `numerator`/`denominator` are the case counts CMS ships
+          side-by-side.
+        - `claims` (3 measures — `dtc`, `ppr`, `pph`): claims-based
+          risk-standardized rates. `score` is the risk-standardized
+          rate (the headline number CMS displays); the observed rate,
+          CI bounds (`risk_standardized_rate_lower/upper`), and
+          `performance_category` (`Better/Same/Worse Than National
+          Rate`, `Not Available`) ride alongside on the same row
+          rather than exploding into extra rows, since they describe
+          the same underlying measurement.
+        - `spending` (1 measure —
+          `medicare_spending_per_episode`): dimensionless index where
+          national = 1.00 by construction. `denominator` carries the
+          episode count backing the ratio.
+      - `national_value` on each row is the corresponding national
+        rate from `stg_cms__home_health_national` (the one-row
+        national benchmark file). Populated for all 17 measures.
+      - `score` semantics vary by (`measure_source`, `measure_code`) —
+        values are only comparable **within** a `measure_code`, never
+        across measures. The long shape is intended for filter-by-
+        measure and small-multiple visualization, not cross-measure
+        aggregation.
+      - Rows whose `score` is `NULL` (suppressed / too few cases) are
+        **kept**, so measure coverage per agency stays analyzable —
+        count non-null scores to measure participation. Observed
+        non-null rates in the current vintage: `oasis` 65.6%
+        (106,334 / 161,980), `claims` 56.2% (21,003 / 37,380),
+        `spending` 69.0% (8,603 / 12,460).
+      - Per-measure footnote columns from the wide file
+        (`*_footnote`) are intentionally **dropped**: they explain
+        why a specific value is null and are only meaningful to
+        someone inspecting a single agency + measure. They remain
+        available on `stg_cms__home_health_care_agencies` for that
+        drill-down.
+      - The agency-level overall Care Compare star rating
+        (`quality_of_patient_care_star_rating`) is **not** included
+        as a measure row — it is an agency attribute, not a measure,
+        and lives on `dim_home_health_agency`.
+      - Agency name/address attributes are not inlined; join
+        `dim_home_health_agency` on `ccn` for them.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number of the home health agency.
+          Foreign key to `dim_home_health_agency`, enforced at error
+          severity — verified zero orphans in the current vintage
+          because both the fact and the dim are derived from the same
+          `stg_cms__home_health_care_agencies` source file. A failure
+          means the derivation has drifted apart (e.g. one side
+          filtered CCNs the other didn't) and the weekly build should
+          fail rather than publish quality rows that join to no
+          agency.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_home_health_agency')
+                field: ccn
+      - name: measure_source
+        description: |
+          Which measure family the row belongs to: `oasis` (OASIS
+          process/outcome measures), `claims` (Medicare claims-based
+          measures: DTC / PPR / PPH), or `spending` (Medicare
+          spending per episode of care).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - oasis
+                  - claims
+                  - spending
+      - name: measure_code
+        description: |
+          Stable short slug for the measure (e.g. `improve_bathing`,
+          `dtc`, `medicare_spending_per_episode`). Unique per agency
+          across all three sources; the wide file gives each measure
+          its own set of columns, so `measure_code` is functionally
+          determined by the source column group and does not overlap
+          across `measure_source` values.
+        data_tests:
+          - not_null
+      - name: measure_name
+        description: |
+          Human-readable measure description drawn from the CMS
+          column labels on the wide file.
+      - name: numerator
+        description: |
+          Case count in the numerator of the measure; `NULL` for the
+          `spending` row (which has no numerator/denominator
+          structure) and wherever CMS suppresses the count.
+      - name: denominator
+        description: |
+          Case count in the denominator of the measure; for the
+          `spending` row this carries
+          `episodes_for_medicare_spending` (the episode count
+          backing the spending ratio). `NULL` wherever CMS suppresses
+          the count.
+      - name: score
+        description: |
+          Headline numeric result for the measure; `NULL` when CMS
+          suppresses the value (typically "too few cases" or "not
+          available"). Semantics depend on
+          (`measure_source`, `measure_code`):
+
+          - `oasis`: reported rate, a percentage (0-100 for
+            outcome/process measures; the `pressure_ulcer` and
+            `major_falls` measures are reported as small percentages
+            because they are adverse events).
+          - `claims`: risk-standardized rate — a percentage for
+            `dtc`, and events per 100 for `ppr`/`pph`.
+          - `spending`: dimensionless spending index where
+            national = 1.00.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: observed_rate
+        description: |
+          Observed (unadjusted) rate for `claims` rows only; `NULL`
+          on `oasis` and `spending` rows.
+      - name: risk_standardized_rate
+        description: |
+          Risk-standardized rate for `claims` rows only. Duplicates
+          `score` on those rows so the claims columns stay together;
+          `NULL` on `oasis` and `spending` rows.
+      - name: risk_standardized_rate_lower
+        description: |
+          Lower bound of the 95% confidence interval on the
+          risk-standardized rate for `claims` rows only; `NULL`
+          elsewhere.
+      - name: risk_standardized_rate_upper
+        description: |
+          Upper bound of the 95% confidence interval on the
+          risk-standardized rate for `claims` rows only; `NULL`
+          elsewhere.
+      - name: performance_category
+        description: |
+          CMS's categorical comparison of the agency's claims-based
+          measure to the national rate. `NULL` on `oasis` and
+          `spending` rows (the source file has no comparison column
+          for them) and where CMS reports the value as absent for a
+          claims measure.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - Better Than National Rate
+                  - Same As National Rate
+                  - Worse Than National Rate
+                  - Not Available
+      - name: national_value
+        description: |
+          Corresponding national benchmark for the measure, joined
+          from `stg_cms__home_health_national`. For `oasis` measures
+          this is the national rate; for `claims` measures the
+          national **observed** rate (CMS publishes an observed
+          national rate, not a risk-standardized one — the score is
+          risk-standardized per-agency, so cross-source comparison
+          is imperfect but is the comparison CMS itself publishes);
+          for `spending` the national spending index (1.00 by
+          construction). Populated for every row in the current
+          vintage.
+        data_tests:
+          - not_null
+      - name: as_of
+        description: |
+          Snapshot vintage of the row's source dataset: the upstream
+          `modified` date CMS reported for
+          `home_health_care_agencies` at capture time (from
+          `stg_cms__dataset_vintages`). Both the agency wide file
+          and the national file come from the same Care Compare
+          snapshot in the current vintage; a future desync would
+          need to be reflected by splitting `as_of` per branch.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ccn
+              - measure_code
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (measure_source = 'claims')
+              or (
+                observed_rate is null
+                and risk_standardized_rate is null
+                and risk_standardized_rate_lower is null
+                and risk_standardized_rate_upper is null
+                and performance_category is null
+              )
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (risk_standardized_rate_lower is null)
+              or (risk_standardized_rate_upper is null)
+              or (risk_standardized_rate_lower <= risk_standardized_rate_upper)
+
   - name: fct_nursing_home_enforcement
     description: |
       Nursing home enforcement actions in long format, unioned from
