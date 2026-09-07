@@ -35,20 +35,76 @@ models:
       - name: ccn
         description: |
           CMS Certification Number. Primary key — one row per
-          hospital. Foreign key to `dim_hospital`, but the utilization
-          files' provider universe is broader than Care Compare's:
-          roughly 120-130 CCNs per vintage (129 in the 2026-07 build:
-          62 in the inpatient file, 67 outpatient-only) are retired
-          identifiers with no `dim_hospital` row — the claims
-          snapshot still lists hospitals that have since closed or
-          re-certified under a new CCN (e.g. acute-to-critical-
-          access conversions like Crenshaw Community Hospital, claims
-          `010008` vs Care Compare `011308`). This is a population
-          gap, not a key-format mismatch: both sides carry conformed
-          six-character CCNs, and no normalization of the 164 `F`-
-          suffixed VA/DoD CCNs in `dim_hospital` (federal facilities
-          that never bill Medicare fee-for-service) reconciles any of
-          them.
+          hospital. Foreign key to `dim_hospital`, kept at **warn**
+          severity because the utilization files' provider universe is
+          structurally broader than Care Compare's, not because of a
+          key-format defect. Both sides carry conformed six-character
+          CCNs; the two files just certify different populations. In
+          the 2026-07 build 129 CCNs (~4% of the fact) have no
+          `dim_hospital` row, and every one is explained by one of
+          three categories:
+
+          1. **PPS-exempt specialty facilities Care Compare omits (44
+             of 129, 34%).** Long-term care hospitals (LTACHs, CCN
+             sequence 2000-2299, 24 rows) and free-standing inpatient
+             rehab facilities (IRFs, CCN sequence 3025-3099, 20 rows)
+             bill Medicare fee-for-service through the utilization
+             files but are excluded from the `Hospital_General_Info`
+             file that seeds `dim_hospital` — Care Compare's overall
+             star rating and general-info roster is scoped to acute
+             short-term hospitals plus a handful of CAH/REH/psych
+             facilities. Confirmed by inspecting
+             `dim_hospital.hospital_type`: 0 IRF rows, 5 Long-term
+             rows out of 5,419. Examples: Shirley Ryan AbilityLab
+             (`143026`), TIRR Memorial Hermann (`453025`), Kindred
+             Hospital Louisville (`182001`).
+
+          2. **Same physical facility, re-certified under a new CCN
+             (30 of 129, 23%).** These orphan CCNs are historical
+             identifiers whose current dim row lives under a different
+             CCN, verifiable by exact `hospital_name` + `state` match:
+             21 acute-to-CAH conversions (e.g. Crenshaw Community
+             `010008` → `011308`, Coffeyville Regional `170145` →
+             `171387`), 6 acute-to-REH conversions under the 2023
+             Rural Emergency Hospital designation (e.g. J Paul Jones
+             `010102` → `010781`, Wayne Medical Center `440010` →
+             `440780`), 2 acute→acute reassignments (Taylor Regional
+             GA `110135` and `110781` both → `110256`), and 1
+             acute→psych (Claxton-Hepburn `330211` → `334068`). No
+             crosswalk is applied here: the fact's `ccn` is the
+             identifier the claims snapshot was billed under, and 3
+             of the 30 (Wayne `440010` → `440780`, Crittenden
+             `180095` → `180779`, Elkview `370153` → `370783`) have
+             their successor CCN *also* present in the utilization
+             file, so a rewrite would collide with `unique(ccn)`.
+
+          3. **Closed, merged, or PPS-exempt cancer centers (55 of
+             129, 43%).** The residual short-term-acute CCNs
+             (sequence 001-879) that don't name-match anything in
+             `dim_hospital` fall into two sub-buckets: (a) 12 rows
+             matching the statutory PPS-exempt cancer-hospital
+             pattern (name contains "cancer", "oncology", or a
+             research-hospital brand such as Dana-Farber, MD
+             Anderson, Memorial Hospital for Cancer, Moffitt,
+             Roswell Park, Fred Hutchinson, City of Hope Helford,
+             USC Norris, Sylvester, Fox Chase, James/Solove) — CMS
+             excludes these from Care Compare's general-info roster
+             by policy; and (b) 43 acute hospitals with no current
+             `dim_hospital` name match and no obvious specialty
+             marker, most consistent with facilities that closed,
+             merged, or rebranded between the utilization claims
+             snapshot and the current Care Compare vintage (e.g.
+             Delaware County Memorial `390081`, Rockville General
+             `070012`, St Luke's Des Peres `260176`).
+
+          None of the 129 CCNs carry an `F`-suffix or letter prefix,
+          so VA/DoD CCN normalization does not apply (a hypothesis
+          already disproved in PR #101). Category counts are
+          reproducible from the raw parquet files with the queries in
+          the description above and will drift as facilities open,
+          close, and re-certify; the FK stays at **warn** because
+          each vintage refresh mechanically produces a new residual,
+          not because the mismatch is unexplained.
         data_tests:
           - not_null
           - unique
@@ -57,12 +113,19 @@ models:
                 to: ref('dim_hospital')
                 field: ccn
               config:
-                # TODO: promote to error once the two snapshots align
-                # — compare this fact's `as_of` against
-                # `dim_hospital.as_of` to spot the skew; a name-based
-                # CCN crosswalk is infeasible today — only ~30 of the
-                # ~120-130 retired CCNs name-match a current Care
-                # Compare row
+                # Warn (not error) is the intended steady state — see
+                # the column description for the 3-category
+                # breakdown. Roughly 34% of the residual are LTACH /
+                # IRF facilities that Care Compare structurally
+                # excludes, ~24% are recertified CCNs whose successor
+                # lives under a different key in dim_hospital (and
+                # can't be merged without breaking unique(ccn) for
+                # 4 of them), and ~42% are PPS-exempt cancer centers
+                # or acute hospitals that closed between snapshots.
+                # A rewrite/crosswalk would silently misattribute
+                # historical claims to a new CCN, so the fact keeps
+                # the identifier the claims were billed under and
+                # accepts the FK gap.
                 severity: warn
       - name: inpatient_total_beneficiaries
         description: |
