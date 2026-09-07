@@ -19,10 +19,14 @@ renamed as (
         coalesce(trim(brnd_name) like '%*', false)
         or coalesce(trim(gnrc_name) like '%*', false)
             as is_brand_generic_aggregate,
-        -- TODO: manufacturer_name also carries the trailing-`*`
-        -- aggregate marker (94 distinct names); strip + flag it here
-        -- if manufacturer ever becomes a join key
-        trim(mftr_name) as manufacturer_name,
+        -- manufacturer_name carries the same trailing-`*` marker
+        -- (94 distinct names, 192 rows); strip it so the value
+        -- conforms across vintages and keep the signal in
+        -- is_manufacturer_aggregate. The `'Overall'` roll-up value is
+        -- never starred, so it passes through unchanged.
+        rtrim(nullif(trim(mftr_name), ''), '* ') as manufacturer_name,
+        coalesce(trim(mftr_name) like '%*', false)
+            as is_manufacturer_aggregate,
         try_cast(tot_mftr as int) as total_manufacturers,
 
         -- 2020 spending
