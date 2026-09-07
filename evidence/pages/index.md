@@ -20,6 +20,10 @@ with dbt on DuckDB from CMS public datasets.
 - [Nursing homes](/nursing-homes) — star ratings, ownership, quality
   measures, and health-inspection enforcement for certified nursing
   homes.
+- [Home health and hospice](/home-health-hospice) — Care Compare star
+  ratings, ownership, OASIS / claims quality vs national benchmarks
+  for home-health agencies, and CAHPS family-caregiver survey plus
+  Hospice Item Set process measures for hospices.
 
 ## Warehouse coverage
 
@@ -73,6 +77,36 @@ select
     enforcement_rows,
     'snapshot as of ' || cast(enforcement_as_of as varchar)
 from cms.nursing_home_stats
+union all
+select
+    'dim_home_health_agency',
+    agencies,
+    cast(states as varchar) || ' states'
+from cms.home_health_stats
+union all
+select
+    'fct_home_health_quality',
+    quality_rows,
+    cast(quality_measures as varchar) || ' measures'
+from cms.home_health_stats
+union all
+select
+    'dim_hospice',
+    hospices,
+    cast(states as varchar) || ' states'
+from cms.hospice_stats
+union all
+select
+    'fct_hospice_quality',
+    quality_rows,
+    cast(his_hci_measures as varchar) || ' measures'
+from cms.hospice_stats
+union all
+select
+    'fct_hospice_cahps',
+    cahps_rows,
+    cast(cahps_measures as varchar) || ' CAHPS measures'
+from cms.hospice_stats
 union all
 select
     'dim_hospital',

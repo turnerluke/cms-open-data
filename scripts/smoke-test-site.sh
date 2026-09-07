@@ -42,6 +42,7 @@ readonly ROUTES=(
     "/	CMS Open Data"
     "/cost-vs-quality/	Cost vs quality"
     "/drug-spending/	Drug spending"
+    "/home-health-hospice/	Home health and hospice"
     "/hospital-quality/	Hospital quality"
     "/nursing-homes/	Nursing homes"
     "/prescribers/	Prescribers"
