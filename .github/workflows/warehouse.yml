@@ -186,6 +186,11 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    # Expose the deployed URL as a job output so the smoke-test job
+    # doesn't have to hardcode the site's location — this keeps working
+    # if the site ever moves to a custom domain.
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v6
@@ -193,3 +198,29 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+
+  # ============================================================================================================================
+  # Post-deploy smoke test
+  # ============================================================================================================================
+  # Verify the live site actually serves every top-level page with real
+  # content — a broken deploy (bad basePath, empty warehouse, dropped
+  # route) that nonetheless publishes cleanly used to go unnoticed until
+  # a maintainer manually curled the site. `scripts/smoke-test-site.sh`
+  # asserts HTTP 200 + a page-specific sentinel string for each route,
+  # with retry/backoff to absorb GitHub Pages CDN propagation delay.
+  # `page_url` is the URL actions/deploy-pages actually deployed to
+  # (via the github-pages environment output), so this stays correct if
+  # the site ever moves to a custom domain.
+  smoke_test:
+    name: Smoke-test live site
+    needs: deploy_pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Smoke-test deployed site
+        env:
+          PAGE_URL: ${{ needs.deploy_pages.outputs.page_url }}
+        run: bash scripts/smoke-test-site.sh "${PAGE_URL%/}"
