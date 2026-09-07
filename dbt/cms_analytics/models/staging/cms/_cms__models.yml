@@ -695,6 +695,409 @@ models:
               - facility_id
               - measure_id
 
+  - name: stg_cms__nursing_home_provider_info
+    description: |
+      Nursing Home Provider Information from CMS Care Compare (DKAN
+      dataset `4pq5-n9py`). One row per Medicare/Medicaid-certified
+      nursing home with star ratings, staffing levels, health
+      inspection cycle scores, and penalty summary counts. Every raw
+      column arrives as text: star ratings become `int`, staffing
+      hours and turnover percentages become `double`, fine totals
+      become `decimal(12,2)`, and the ISO `YYYY-MM-DD` date strings
+      become proper `date`s — all via `try_cast`, so the source's
+      empty-string sentinels become `NULL`. `Y`/`N` flag columns map
+      to booleans. Grain: `ccn`.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number, conformed as `upper(trim())`.
+          Six alphanumeric characters — 247 homes carry a letter in
+          the third position (e.g. `01A234`), so this does not join
+          to the all-numeric hospital CCNs. Primary key — one row per
+          nursing home.
+        data_tests:
+          - not_null
+          - unique
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[0-9A-Z]{6}$"
+      - name: provider_name
+        description: "Nursing home name (trimmed)."
+        data_tests:
+          - not_null
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros (raw `zip_code`).
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{5}$'
+      - name: special_focus_status
+        description: |
+          CMS Special Focus Facility program status: `SFF` or
+          `SFF Candidate`; empty string (most homes) becomes `NULL`.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["SFF", "SFF Candidate"]
+      - name: overall_rating
+        description: |
+          CMS overall five-star rating, 1–5. Empty string (127
+          unrated homes in the current vintage) becomes `NULL`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: chain_id
+        description: |
+          Numeric identifier of the chain the home belongs to;
+          `NULL` for independent homes (about 31% of rows).
+      - name: total_fines_dollars
+        description: |
+          Total fines levied against the home in the last three
+          years, in dollars (raw `total_amount_of_fines_in_dollars`
+          cast to `decimal(12,2)`).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: processing_date
+        description: "Date CMS processed the source file."
+        data_tests:
+          - not_null
+
+  - name: stg_cms__nursing_home_quality_measures_mds
+    description: |
+      Nursing Home MDS-based Quality Measures from CMS Care Compare
+      (DKAN dataset `djen-97ju`). One row per nursing home per MDS
+      quality measure, with four quarterly scores and their
+      four-quarter average (percentages, 0–100). Scores arrive as
+      text with empty-string sentinels — `try_cast` to `double`
+      turns those into `NULL`s. Grain: (`ccn`, `measure_code`);
+      `resident_type` is determined by the measure code.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number of the nursing home, conformed as
+          `upper(trim())`.
+        data_tests:
+          - not_null
+      - name: measure_code
+        description: |
+          Numeric MDS measure code (e.g. `401`), kept as text.
+        data_tests:
+          - not_null
+      - name: resident_type
+        description: "`Long Stay` or `Short Stay`."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Long Stay", "Short Stay"]
+      - name: four_quarter_average_score
+        description: |
+          Average of the four quarterly measure scores (a
+          percentage); `NULL` when suppressed (about 4% of rows —
+          the individual quarterly scores are suppressed far more
+          often, ~22% — flagged in
+          `four_quarter_average_score_footnote`).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: used_in_five_star_rating
+        description: |
+          Whether the measure feeds the QM five-star rating (raw
+          `Y`/`N` mapped to boolean).
+        data_tests:
+          - not_null
+      - name: measure_period
+        description: |
+          Quarter range the scores cover, verbatim (e.g.
+          `2025Q2-2026Q1`; the two claims-adjacent MDS measures lag
+          a quarter behind the rest).
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ccn
+              - measure_code
+
+  - name: stg_cms__nursing_home_quality_measures_claims
+    description: |
+      Nursing Home Medicare-claims-based Quality Measures from CMS
+      Care Compare (DKAN dataset `ijh5-nb2v`). One row per nursing
+      home per claims measure with risk-adjusted, observed, and
+      expected scores (rates whose scale varies by measure). Scores
+      arrive as text with empty-string sentinels — `try_cast` to
+      `double` turns those into `NULL`s. Grain: (`ccn`,
+      `measure_code`).
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number of the nursing home, conformed as
+          `upper(trim())`.
+        data_tests:
+          - not_null
+      - name: measure_code
+        description: |
+          Numeric claims measure code (e.g. `521`), kept as text.
+        data_tests:
+          - not_null
+      - name: adjusted_score
+        description: |
+          Risk-adjusted measure score; `NULL` when suppressed
+          (about 21% of rows, flagged in `score_footnote`).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: used_in_five_star_rating
+        description: |
+          Whether the measure feeds the QM five-star rating; every
+          claims measure in the current vintage does.
+        data_tests:
+          - not_null
+      - name: measure_period
+        description: |
+          Date range the scores cover, verbatim `YYYYMMDD-YYYYMMDD`
+          (a single value per vintage).
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ccn
+              - measure_code
+
+  - name: stg_cms__nursing_home_health_deficiencies
+    description: |
+      Nursing Home Health Deficiencies from CMS Care Compare (DKAN
+      dataset `r5ix-sfxw`). One row per deficiency citation from
+      health inspections over roughly the last three inspection
+      cycles. ISO date strings become proper `date`s (about 0.6% of
+      rows have no `correction_date` yet — empty string becomes
+      `NULL`), and the `Y`/`N` citation-context flags map to
+      booleans. Grain: (`ccn`, `survey_date`, `deficiency_prefix`,
+      `deficiency_tag`) — a home is cited at most once per tag per
+      survey.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number of the nursing home, conformed as
+          `upper(trim())`.
+        data_tests:
+          - not_null
+      - name: survey_date
+        description: "Date of the inspection survey that cited the deficiency."
+        data_tests:
+          - not_null
+      - name: deficiency_prefix
+        description: |
+          Regulation-set prefix of the tag (`F` — long-term-care
+          requirements — for every row in the current vintage).
+        data_tests:
+          - not_null
+      - name: deficiency_tag
+        description: |
+          Zero-padded four-digit deficiency tag number ("F-tag"),
+          kept as text to preserve the leading zero.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{4}$'
+      - name: scope_severity_code
+        description: |
+          CMS scope/severity letter, `A` (least serious) through `L`
+          (most serious); only `B`–`L` occur in the current vintage.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[A-L]$"
+      - name: correction_status
+        description: |
+          Correction status narrative (raw `deficiency_corrected`,
+          e.g. `Deficient, Provider has date of correction`).
+        data_tests:
+          - not_null
+      - name: correction_date
+        description: |
+          Date the deficiency was corrected; `NULL` when no
+          correction date exists yet. Can precede `survey_date`
+          (corrections made during the inspection window).
+      - name: inspection_cycle
+        description: "Rating cycle the survey belongs to (1–3)."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3]
+                quote: false
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ccn
+              - survey_date
+              - deficiency_prefix
+              - deficiency_tag
+
+  - name: stg_cms__nursing_home_penalties
+    description: |
+      Nursing Home Penalties from CMS Care Compare (DKAN dataset
+      `g6vv-u9sr`). One row per fine or payment denial levied
+      against a nursing home over roughly the last three years.
+      Fine columns are populated only on `Fine` rows and
+      payment-denial columns only on `Payment Denial` rows —
+      enforced by the model-level `dbt_utils.expression_is_true`
+      test. Fine amounts become `decimal(12,2)`; ISO date strings
+      become proper `date`s. Grain: (`ccn`, `penalty_date`,
+      `penalty_type`, `fine_id`) — a home can receive several
+      distinct fines on the same date (673 such groups), so
+      `fine_id` is part of the key.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number of the nursing home, conformed as
+          `upper(trim())`.
+        data_tests:
+          - not_null
+      - name: penalty_date
+        description: "Date the penalty was imposed."
+        data_tests:
+          - not_null
+      - name: penalty_type
+        description: "`Fine` or `Payment Denial`."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Fine", "Payment Denial"]
+      - name: fine_id
+        description: |
+          CMS fine identifier, kept as text; `NULL` on
+          `Payment Denial` rows.
+      - name: fine_amount
+        description: |
+          Fine amount in dollars (`decimal(12,2)`); `NULL` on
+          `Payment Denial` rows.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: payment_denial_start_date
+        description: |
+          Start date of the Medicare payment denial; `NULL` on
+          `Fine` rows.
+      - name: payment_denial_length_in_days
+        description: |
+          Length of the payment denial in days; `NULL` on `Fine`
+          rows.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ccn
+              - penalty_date
+              - penalty_type
+              - fine_id
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (penalty_type = 'Fine')
+              = (fine_amount is not null)
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (penalty_type = 'Fine')
+              = (fine_id is not null)
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (penalty_type = 'Payment Denial')
+              = (payment_denial_start_date is not null)
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (penalty_type = 'Payment Denial')
+              = (payment_denial_length_in_days is not null)
+
+  - name: stg_cms__nursing_home_ownership
+    description: |
+      Nursing Home Ownership from CMS Care Compare (DKAN dataset
+      `y2hd-n93e`). One row per nursing home per owner/manager per
+      role. Staging parses `ownership_percentage` (`'81%'` → `81`;
+      `'NOT APPLICABLE'` / `'NO PERCENTAGE PROVIDED'` / empty
+      become `NULL`) and `association_date` (`'since 01/25/2012'` →
+      `date`; `'NO DATE PROVIDED'` / empty become `NULL`). Grain:
+      (`ccn`, `owner_role`, `owner_name`) — `owner_name` is `NULL`
+      on the placeholder `Ownership Data Not Available` rows (658
+      rows, at most one per home), which the uniqueness test's
+      `group by` still keys correctly.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number of the nursing home, conformed as
+          `upper(trim())`.
+        data_tests:
+          - not_null
+      - name: owner_role
+        description: |
+          Role of the owner or manager (raw
+          `role_played_by_owner_or_manager_in_facility`, e.g.
+          `5% OR GREATER DIRECT OWNERSHIP INTEREST`), or the
+          placeholder `Ownership Data Not Available`.
+        data_tests:
+          - not_null
+      - name: owner_type
+        description: |
+          `Individual` or `Organization`; `NULL` on placeholder
+          rows.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["Individual", "Organization"]
+      - name: owner_name
+        description: |
+          Owner or manager name (`LAST, FIRST` for individuals);
+          `NULL` on placeholder rows.
+      - name: ownership_percentage
+        description: |
+          Ownership stake as a whole-number percent (5–100);
+          `NULL` where the source reports `NOT APPLICABLE` (roles
+          without a stake) or `NO PERCENTAGE PROVIDED`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: association_date
+        description: |
+          Date the owner became associated with the home; `NULL`
+          where the source reports `NO DATE PROVIDED`.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ccn
+              - owner_role
+              - owner_name
+
   - name: stg_cms__dataset_vintages
     description: |
       One row per extracted dataset with the upstream publication dates
