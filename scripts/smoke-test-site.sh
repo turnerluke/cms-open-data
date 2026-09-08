@@ -40,6 +40,7 @@ readonly BACKOFFS=(5 10 15 20 25 30)
 # route<TAB>sentinel — keep in sync with evidence/pages/*.md frontmatter.
 readonly ROUTES=(
     "/	CMS Open Data"
+    "/clinicians/	Clinicians and industry payments"
     "/cost-vs-quality/	Cost vs quality"
     "/drug-spending/	Drug spending"
     "/home-health-hospice/	Home health and hospice"
