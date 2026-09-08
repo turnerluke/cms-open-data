@@ -108,8 +108,7 @@ jobs:
       # `dataset_vintages` is excluded because it is an external spec —
       # its sidecar files are written as a side effect of every
       # extraction asset. Registry assets with no staging model (e.g.
-      # the multi-GB NPPES/Open Payments extracts) are deliberately not
-      # selected.
+      # the multi-GB NPPES extract) are deliberately not selected.
       - name: Materialize raw extraction assets
         run: >
           uv run --package cms-pipelines dagster asset materialize
