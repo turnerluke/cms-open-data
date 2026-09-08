@@ -1134,3 +1134,202 @@ models:
               - generic_name
               - manufacturer_name
               - spending_year
+
+  - name: fct_industry_payments
+    description: |
+      Open Payments general-payment (Sunshine Act) transfers of value
+      from applicable manufacturers and GPOs to covered recipients
+      for program year 2024, one row per general-payment record from
+      `stg_cms__open_payments_general_2024`. Grain: `record_id`
+      (15,498,687 rows in the 2024 file).
+
+      Modeling choices to be aware of:
+
+      - The source file is one dataset per program year; this fact
+        pins 2024. The upstream `modified` date is exposed as `as_of`
+        via `stg_cms__dataset_vintages`. Adding 2020–2023 files is a
+        registry-only change (one row per year in `datasets.toml`).
+      - Recipient scope is broader than an individual clinician:
+        `covered_recipient_type` is
+        `Covered Recipient Physician` for 9,965,643 rows,
+        `Covered Recipient Non-Physician Practitioner` for
+        5,495,656 rows, and `Covered Recipient Teaching Hospital`
+        for 37,388 rows. Both clinician variants are the population
+        `dim_clinician` covers; teaching-hospital rows carry
+        `teaching_hospital_ccn` instead. The FK to `dim_clinician`
+        is filtered to `covered_recipient_npi is not null` so it
+        tests only the clinician-with-NPI population — see the
+        `covered_recipient_npi` column for the orphan breakdown.
+      - `covered_recipient_npi` is populated on 15,447,409 rows
+        (99.7%). The remaining 51,278 nulls are the 37,388
+        teaching-hospital rows plus ~14K covered clinician rows the
+        payer filed without an NPI. No rows are dropped.
+      - Dollar amounts (`total_amount_of_payment_usd`) are kept
+        pass-through — never coalesced to 0. `nature_of_payment` is
+        the primary categorical filter (16 values; Food and Beverage
+        dominates at 91.5%).
+      - Product columns expose only slot 1 (populated on 94% of
+        rows); slots 2–5 are extremely sparse (<5% each) and stay in
+        the raw source for the rare deep drill-in.
+      - `date_of_payment` is nulled out when the raw value is
+        earlier than 2014-01-01 — 75 rows in the 2024 vintage report
+        `0002-11-30`, an obvious year-2 typo that would otherwise
+        add a phantom "year 2" bucket to any
+        `date_trunc('year', ...)` chart. The derived `payment_year`
+        column coalesces `year(date_of_payment)` with `program_year`
+        so downstream charts have a clean, never-null year to bucket
+        on.
+      - Payer-name variance: the 2024 file has 1,838 distinct
+        `paying_manufacturer_or_gpo_id` values but 1,904 distinct
+        `paying_manufacturer_or_gpo_name` values because a single
+        payer id can carry cosmetically different name strings
+        across filings (e.g. `CVRx, Inc.` / `CVRx. Inc.` /
+        `CVRx Inc.` all share one id). Top-payer analyses should
+        group by `paying_manufacturer_or_gpo_id` and pick a
+        representative name via `any_value(paying_manufacturer_or_gpo_name)`
+        — grouping by raw name splits the same payer across rows.
+      - Research and ownership disclosures are staged in this PR but
+        not promoted to their own facts yet — the research file is
+        overwhelmingly non-NPI (only 3.7% of rows carry a covered-
+        recipient NPI) and the ownership file is 4,834 rows, so
+        their analytical shape is different enough that a joint
+        `fct` would obscure the general-payment grain. Follow-up
+        facts (`fct_research_payments`, `fct_ownership_interests`)
+        can be added once a downstream page needs them.
+    columns:
+      - name: record_id
+        description: |
+          CMS-assigned record identifier — one per general-payment
+          transaction. Primary key.
+        data_tests:
+          - not_null
+          - unique
+      - name: program_year
+        description: |
+          Program year the payment covers. Always `2024` in this
+          build.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [2024]
+      - name: covered_recipient_npi
+        description: |
+          National Provider Identifier of the covered-recipient
+          clinician, zero-padded ten-digit text.
+
+          Foreign key to `dim_clinician`, held at **warn** severity
+          and filtered to `covered_recipient_npi is not null`. In
+          the 2024 build the 15,447,409 rows with an NPI produce
+          2,345,196 orphan rows (~15.2%) — payments to clinicians
+          who accepted industry funds but do not appear in Care
+          Compare's National Downloadable file. At the distinct-NPI
+          level, 318,189 of 984,069 payee NPIs (~32.3%) are absent
+          from the roster. The orphan set spans every clinician
+          primary-type proportionally (Medical Doctor 779K rows,
+          Nurse Practitioner 751K, Physician Assistant 339K, Doctor
+          of Dentistry 323K), consistent with two structural gaps:
+          Care Compare publishes only clinicians actively enrolled
+          in Medicare for consumer look-up (so pure private-pay or
+          cash-only clinicians never appear there), and dentists /
+          optometrists / podiatrists file Sunshine reports even
+          though most don't bill Medicare Part B. Teaching-hospital
+          rows (37,388, no NPI) and the ~14K covered rows the payer
+          filed without an NPI are excluded from the test via the
+          `where` clause — this fact keeps them so the row count
+          matches the file, and the FK gap is accepted rather than
+          rewritten.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_clinician')
+                field: npi
+              config:
+                # Warn (not error) is the intended steady state:
+                # teaching-hospital and NPI-missing rows are filtered
+                # out via the `where` below, and the ~15% residual
+                # among NPI-populated rows are Sunshine-reported
+                # clinicians absent from Care Compare's National
+                # Downloadable file (dentists, cash-pay private
+                # practices, etc.) — a universe gap, not a key
+                # defect. A rewrite/drop would silently discard real
+                # industry-payment activity, so the fact keeps every
+                # populated NPI and accepts the FK gap.
+                severity: warn
+                where: "covered_recipient_npi is not null"
+      - name: covered_recipient_type
+        description: |
+          Recipient variant governing which identifier columns are
+          populated. Three values in the general file: physician,
+          non-physician practitioner, teaching hospital.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - "Covered Recipient Physician"
+                  - "Covered Recipient Non-Physician Practitioner"
+                  - "Covered Recipient Teaching Hospital"
+      - name: teaching_hospital_ccn
+        description: |
+          CMS Certification Number of the teaching-hospital
+          recipient, populated only for the 37,388 teaching-hospital
+          rows. Not FK-tested here — `dim_hospital` is scoped to the
+          Medicare hospital compare roster, which is a different
+          population from the Open Payments teaching-hospital list.
+      - name: total_amount_of_payment_usd
+        description: "Total payment amount, in US dollars."
+        data_tests:
+          - not_null
+      - name: nature_of_payment
+        description: |
+          Sunshine Act nature-of-payment category. Primary categorical
+          filter for general-payment analyses. 16 values in 2024;
+          Food and Beverage dominates at 91.5%.
+        data_tests:
+          - not_null
+      - name: form_of_payment
+        description: |
+          Payment vehicle. Overwhelmingly in-kind items and services
+          or cash-equivalent; a small tail of stock / dividend /
+          option rows.
+        data_tests:
+          - not_null
+      - name: date_of_payment
+        description: |
+          Date the payment occurred. Values earlier than
+          `2014-01-01` are treated as data-entry typos and nulled
+          out — 75 rows in the 2024 vintage report `0002-11-30`, an
+          obvious year-2 mis-key that would otherwise render a
+          phantom "year 2" bucket on `date_trunc('year', ...)`
+          charts. Sunshine Act reporting began in program year 2013,
+          so the 2014 floor is generous relative to the actual
+          program-year coverage of this file (2024 only). Consumers
+          who need a never-null year to bucket on should read
+          `payment_year` instead. A model-level
+          `dbt_utils.expression_is_true` test asserts the post-null
+          invariant `date_of_payment >= date '2014-01-01'`.
+      - name: payment_year
+        description: |
+          Derived reporting year, safe to bucket time-series charts
+          on. Equal to `year(date_of_payment)` when the (cleaned)
+          date is populated, and falls back to `program_year`
+          otherwise. Never `NULL` in the current vintage — every row
+          has a `program_year`. In the 2024 build,
+          15,498,687 rows fall in `payment_year = 2024` (all 75
+          typo-nulled rows carry `program_year = 2024`).
+        data_tests:
+          - not_null
+      - name: as_of
+        description: |
+          Upstream `modified` date of the source file at extraction
+          time (from `stg_cms__dataset_vintages`). Snapshot vintage
+          the payment records came from.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "date_of_payment >= date '2014-01-01'"
+          config:
+            where: "date_of_payment is not null"
