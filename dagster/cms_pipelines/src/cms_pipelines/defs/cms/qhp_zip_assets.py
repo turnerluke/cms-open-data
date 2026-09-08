@@ -38,9 +38,8 @@ from pathlib import Path
 import tempfile
 import zipfile
 
-from cms_api import HEALTHCARE_GOV_DKAN_BASE_URL, DatasetSpec, get_dkan_dataset_zip_url, load_registry
+from cms_api import HEALTHCARE_GOV_DKAN_BASE_URL, DatasetSpec, download_file, get_dkan_dataset_zip_url, load_registry
 import duckdb
-import httpx
 
 from cms_pipelines.defs.cms.vintage_sidecar import capture_dataset_vintage
 from cms_pipelines.defs.io_managers.parquet import publish_parquet, staged_write
@@ -59,8 +58,6 @@ _ASSET_PREFIX = "cms_"
 _XLSX_HEADER_RANGE = "A2:ZZ2"
 _XLSX_DATA_RANGE_TEMPLATE = "A2:{last_column}1048576"
 _XLSX_MAX_COLUMN_WIDTH = 702  # ZZ in 1-based Excel notation = 26*26 + 26
-_HTTP_TIMEOUT_SECONDS = 300.0  # PY2026 Individual Medical is ~60 MB compressed
-_HTTP_CHUNK_SIZE = 1 << 20  # 1 MiB; balances syscall overhead against memory
 
 
 def _resolve_healthcare_gov_zip_url(spec: DatasetSpec) -> str:
@@ -74,21 +71,6 @@ def _resolve_healthcare_gov_zip_url(spec: DatasetSpec) -> str:
 _RESOLVERS: dict[str, Callable[[DatasetSpec], str]] = {
     "dkan_healthcare_gov_zip": _resolve_healthcare_gov_zip_url,
 }
-
-
-def _download_zip(*, url: str, dest: Path) -> None:
-    """Stream ``url`` to ``dest`` via httpx, raising on any non-2xx status.
-
-    Direct ``urllib`` would also work, but we already depend on httpx
-    transitively through ``cms_api`` and it gives us TLS verification,
-    sensible defaults, and ``raise_for_status`` consistent with the rest
-    of the codebase.
-    """
-    with httpx.stream("GET", url, timeout=_HTTP_TIMEOUT_SECONDS, follow_redirects=True) as response:
-        response.raise_for_status()
-        with dest.open("wb") as fp:
-            for chunk in response.iter_bytes(_HTTP_CHUNK_SIZE):
-                fp.write(chunk)
 
 
 def _extract_single_xlsx(*, zip_path: Path, dest_dir: Path) -> Path:
@@ -188,7 +170,16 @@ def _build_asset(spec: DatasetSpec) -> AssetsDefinition:
             with tempfile.TemporaryDirectory(prefix=f"{asset_name}-") as tmp:
                 tmp_dir = Path(tmp)
                 zip_path = tmp_dir / "download.zip"
-                _download_zip(url=zip_url, dest=zip_path)
+                # Streams the ZIP through ``cms_api.download_file`` so
+                # QHP downloads share the same tenacity retry policy as
+                # the JSON APIs and the bulk-CSV path — transport errors
+                # and HTTP 429/5xx retry with ``Retry-After``-honoring
+                # backoff, tunable via ``CMS_API_RETRY_*`` env vars. The
+                # helper's 600s read timeout comfortably covers the
+                # ~60 MB PY2026 Individual Medical archive on slow
+                # runners; the previous inline downloader used a fixed
+                # 300s and no retry at all.
+                download_file(zip_url, zip_path)
                 xlsx_path = _extract_single_xlsx(zip_path=zip_path, dest_dir=tmp_dir)
                 row_count = _run_xlsx_to_parquet(xlsx_path=xlsx_path, out_path=staged)
             if row_count == 0:

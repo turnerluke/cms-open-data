@@ -399,7 +399,6 @@ dependencies = [
     { name = "dagster-dbt" },
     { name = "dbt-duckdb" },
     { name = "duckdb" },
-    { name = "httpx" },
     { name = "pyarrow" },
 ]
 
@@ -419,7 +418,6 @@ requires-dist = [
     { name = "dagster-dbt", specifier = ">=0.29.7" },
     { name = "dbt-duckdb", specifier = ">=1.10.1" },
     { name = "duckdb", specifier = ">=1.0.0" },
-    { name = "httpx", specifier = ">=0.27.0" },
     { name = "pyarrow", specifier = ">=25.0.0" },
 ]
 

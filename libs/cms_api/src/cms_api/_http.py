@@ -1,9 +1,10 @@
 """Shared HTTP client construction and retry policy.
 
-All public clients in this package go through `request_json`, which wraps an
-`httpx.Client` call in a tenacity retry loop. Transient failures (network
-errors, HTTP 429, HTTP 5xx) are retried with exponential backoff; everything
-else surfaces immediately so callers don't silently swallow bad requests.
+All public clients in this package go through `request_json` or
+`download_file`, which wrap an ``httpx`` call in a tenacity retry loop.
+Transient failures (network errors, HTTP 429, HTTP 5xx) are retried with
+exponential backoff; everything else surfaces immediately so callers
+don't silently swallow bad requests.
 
 When a 429 response carries an integer-seconds ``Retry-After`` header the
 retry loop honours it (clamped to the wait cap) instead of using the
@@ -39,6 +40,7 @@ from tenacity import RetryCallState, retry, retry_if_exception, stop_after_attem
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
+    from pathlib import Path
 
     from ._types import JsonValue
 
@@ -50,6 +52,18 @@ DEFAULT_USER_AGENT = "cms-api/0.1 (+https://github.com/turnerluke/cms-open-data)
 DEFAULT_RETRY_MAX_ATTEMPTS = 5
 DEFAULT_RETRY_WAIT_MULTIPLIER = 0.5
 DEFAULT_RETRY_WAIT_MAX = 8.0
+
+# Read timeout for bulk-file downloads. The multi-GB CMS CSVs can idle
+# for minutes between chunks on slower runners; the JSON-API default 30s
+# read timeout would kill those transfers well before completion. Keep
+# the connect timeout on `CMS_API_TIMEOUT` (default 30s) — it's the
+# read side that needs the longer budget.
+_DOWNLOAD_READ_TIMEOUT_SECONDS = 600.0
+
+# 512 KiB per chunk keeps download throughput close to line rate without
+# pinning much memory; multi-GB CMS files spend seconds to minutes in
+# the loop and never hold more than one chunk at a time.
+_DEFAULT_DOWNLOAD_CHUNK_BYTES = 512 * 1024
 
 _HTTP_TOO_MANY_REQUESTS = 429
 _HTTP_SERVER_ERROR_FLOOR = 500
@@ -112,7 +126,7 @@ def _parse_retry_after_seconds(response: httpx.Response) -> float | None:
 
 
 def _make_wait(multiplier: float, wait_max: float) -> WaitCallable:
-    """Build the tenacity wait callable used by ``request_json``.
+    """Build the tenacity wait callable used by the retry decorator.
 
     Falls back to exponential backoff for every retry case except a 429
     that carries a parseable integer-seconds ``Retry-After``, in which case
@@ -131,6 +145,35 @@ def _make_wait(multiplier: float, wait_max: float) -> WaitCallable:
         return exponential(retry_state)
 
     return _wait
+
+
+def _run_with_retry[T](fn: Callable[[], T]) -> T:
+    """Invoke ``fn`` under the shared transient-error retry policy.
+
+    Reads ``CMS_API_RETRY_*`` env vars on every call so tests can dial
+    them down via ``monkeypatch.setenv`` without re-importing the module.
+    Both ``request_json`` and ``download_file`` funnel through here so
+    the two HTTP paths share one policy — retries, waits, and env knobs
+    stay in lockstep.
+    """
+    max_attempts = _env_int("CMS_API_RETRY_MAX_ATTEMPTS", DEFAULT_RETRY_MAX_ATTEMPTS)
+    wait_multiplier = _env_float("CMS_API_RETRY_WAIT_MULTIPLIER", DEFAULT_RETRY_WAIT_MULTIPLIER)
+    wait_max = _env_float("CMS_API_RETRY_WAIT_MAX", DEFAULT_RETRY_WAIT_MAX)
+
+    @retry(
+        retry=retry_if_exception(_is_transient),
+        stop=stop_after_attempt(max_attempts),
+        wait=_make_wait(wait_multiplier, wait_max),
+        reraise=True,
+    )
+    def _wrapped() -> T:
+        """Tenacity-wrapped invocation of the caller's ``fn``."""
+        return fn()
+
+    # tenacity's @retry decorator drops the inner function's return type;
+    # rebind at the call site so the caller's ``T`` propagates out.
+    result: T = _wrapped()
+    return result
 
 
 def build_client(
@@ -168,16 +211,7 @@ def request_json(
     the environment on every call so tests can dial them down via
     ``monkeypatch.setenv`` without re-importing the module.
     """
-    max_attempts = _env_int("CMS_API_RETRY_MAX_ATTEMPTS", DEFAULT_RETRY_MAX_ATTEMPTS)
-    wait_multiplier = _env_float("CMS_API_RETRY_WAIT_MULTIPLIER", DEFAULT_RETRY_WAIT_MULTIPLIER)
-    wait_max = _env_float("CMS_API_RETRY_WAIT_MAX", DEFAULT_RETRY_WAIT_MAX)
 
-    @retry(
-        retry=retry_if_exception(_is_transient),
-        stop=stop_after_attempt(max_attempts),
-        wait=_make_wait(wait_multiplier, wait_max),
-        reraise=True,
-    )
     def _do() -> JsonValue:
         response = client.request(method, url, params=dict(params) if params else None)
         response.raise_for_status()
@@ -186,7 +220,62 @@ def request_json(
         parsed: JsonValue = response.json()
         return parsed
 
-    # tenacity's @retry decorator drops the inner function's return type;
-    # rebind again at the call site for the same reason.
-    result: JsonValue = _do()
-    return result
+    return _run_with_retry(_do)
+
+
+def download_file(
+    url: str,
+    dest: Path,
+    *,
+    chunk_size: int = _DEFAULT_DOWNLOAD_CHUNK_BYTES,
+) -> None:
+    """Stream ``url`` to ``dest`` in fixed-size chunks over HTTPS.
+
+    Shares the retry policy with ``request_json``: transport errors and
+    HTTP 429/5xx retry with exponential backoff, and 429s carrying an
+    integer-seconds ``Retry-After`` sleep for that interval (clamped to
+    ``CMS_API_RETRY_WAIT_MAX``). All the ``CMS_API_RETRY_*`` env knobs
+    apply. This matters because CMS bulk-CSV file GETs (multi-GB responses
+    on ``data.cms.gov`` and ``download.cms.gov``) get 429'd on shared
+    egress IPs the same way the JSON APIs do; without shared retry a
+    single throttled file GET kills the whole asset.
+
+    Behaviour per attempt:
+
+    - Fresh ``httpx.stream("GET", ...)`` with ``follow_redirects=True``
+      (``download.cms.gov`` 302s through Akamai) and the library's
+      default User-Agent so CMS logs recognize the client.
+    - Read timeout is 600s (multi-GB transfers can idle between chunks);
+      connect timeout follows ``CMS_API_TIMEOUT`` (default 30s).
+    - ``response.raise_for_status()`` runs before any bytes are written,
+      so a 429/404/5xx body never lands in ``dest``.
+    - ``dest`` is opened fresh in ``"wb"`` mode on every attempt — a
+      retry after a mid-stream ``TransportError`` restarts the file from
+      scratch instead of appending garbage to a partial download.
+
+    Chunks are streamed straight to disk, so the response body is never
+    materialized in Python memory regardless of file size.
+    """
+    connect_timeout = _env_float("CMS_API_TIMEOUT", DEFAULT_TIMEOUT_SECONDS)
+    timeout = httpx.Timeout(connect_timeout, read=_DOWNLOAD_READ_TIMEOUT_SECONDS)
+    headers = {"User-Agent": DEFAULT_USER_AGENT}
+
+    def _do() -> None:
+        """Single download attempt; retried by ``_run_with_retry``."""
+        with httpx.stream(
+            "GET",
+            url,
+            follow_redirects=True,
+            timeout=timeout,
+            headers=headers,
+        ) as response:
+            # Check status BEFORE opening the destination file so a
+            # 404/429/5xx never leaves an empty (or stale-error-body)
+            # file at ``dest`` where a downstream reader might mistake
+            # it for real data.
+            response.raise_for_status()
+            with dest.open("wb") as fh:
+                for chunk in response.iter_bytes(chunk_size=chunk_size):
+                    fh.write(chunk)
+
+    _run_with_retry(_do)
