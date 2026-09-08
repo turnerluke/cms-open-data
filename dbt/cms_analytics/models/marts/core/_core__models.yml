@@ -719,3 +719,424 @@ models:
           one snapshot.
         data_tests:
           - not_null
+
+  - name: dim_clinician
+    description: |
+      One row per Medicare-enrolled clinician (`NPI`), conformed from
+      `stg_cms__doctors_and_clinicians_national_downloadable`. The
+      source publishes 3.39M rows at the
+      (`npi`, `individual_enrollment_id`, `organization_pac_id`,
+      `address_id`) grain — 1,622,454 distinct NPIs in the
+      2026-07-31 vintage — because clinicians with multiple PECOS
+      enrollments,
+      group memberships, or practice locations appear on multiple
+      lines. This dim collapses those rows to one per `NPI` using
+      the following deterministic rules:
+
+      - **`gender`, `graduation_year`, `provider_suffix`:**
+        constant per NPI in the 2026-07-31 vintage (max distinct
+        value per NPI = 1), so `any_value` returns a stable pick.
+      - **`primary_specialty`:** varies for ~9,604 NPIs (2 with 0
+        non-null specialties, 9,401 with 2, 196 with 3, 6 with 4, 1
+        with 5). Collapsed to the most-frequent specialty per NPI,
+        breaking ties alphabetically so the collapse is reproducible
+        across warehouse rebuilds.
+      - **`credentials`:** same rule as `primary_specialty`; only
+        one NPI in the 2026-07-31 vintage has two distinct
+        credentials, but the stable rule makes future vintages
+        reproducible.
+      - **`provider_first_name`, `provider_middle_name`,
+        `provider_last_name`, `medical_school`:** near-constant
+        (max distinct per NPI = 2 in the 2026-07-31 vintage; 2
+        NPIs vary on `first_name`, 3 on `middle_name`, 1 on
+        `last_name`, 2 on `medical_school`). Same most-frequent +
+        alphabetical tiebreak as `primary_specialty` so the pick is
+        deterministic across rebuilds instead of relying on
+        `any_value` for the varying rows.
+      - **`primary_organization_pac_id` / `primary_facility_name`:**
+        most-frequent org for the NPI (by row count), ties broken
+        by max reported `organization_member_count`, then
+        alphabetically by facility name. NULL for the ~14% of NPIs
+        with no organization row (solo-practice).
+      - **`offers_telehealth`:** `TRUE` if any row for the NPI has
+        `Telehlth = 'Y'`, `NULL` when every row is blank. The
+        source column is strictly `Y`/blank (verified against the
+        raw parquet), so there is no third state — `FALSE` never
+        appears. Two-state distribution in the 2026-07-31 vintage:
+        339,622 `TRUE`, 1,282,832 `NULL`.
+      - **Rollup counts:** `practice_location_count`,
+        `organization_count`, `practice_state_count`,
+        `enrollment_count` are distinct counts across the NPI's
+        source rows; they preserve the multi-enrollment /
+        multi-location breadth the collapse would otherwise hide.
+
+      The staging address block (address_line_1..2, city, state,
+      zip5, zip4, phone) is intentionally **not** promoted to the
+      dim — it varies per practice location, so an NPI-grain dim
+      has no canonical answer. Use `bridge_clinician_facility` to
+      join to the facility dims for location context, or query the
+      staging table directly when the per-enrollment row is needed.
+    columns:
+      - name: npi
+        description: |
+          National Provider Identifier. Primary key — one row per
+          NPI. Zero-padded ten-digit text.
+        data_tests:
+          - not_null
+          - unique
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{10}$'
+      - name: provider_last_name
+        description: |
+          Clinician last name. Collapsed with the same
+          most-frequent + alphabetical tiebreak as
+          `primary_specialty` (1 NPI in the 2026-07-31 vintage
+          reports two spellings).
+      - name: provider_first_name
+        description: |
+          Clinician first name. Same deterministic collapse rule
+          as `provider_last_name` (2 NPIs vary in the 2026-07-31
+          vintage).
+      - name: provider_middle_name
+        description: |
+          Clinician middle name; `NULL` when unreported. Same
+          deterministic collapse rule as `provider_last_name` (3
+          NPIs vary in the 2026-07-31 vintage).
+      - name: provider_suffix
+        description: "Name suffix (`JR`, `III`, etc.); `NULL` when unreported."
+      - name: gender
+        description: |
+          Clinician-reported gender: `M`, `F`, or `U` (unreported).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["M", "F", "U"]
+      - name: credentials
+        description: |
+          Credential letters (e.g. `MD`, `DO`, `NP`). `NULL` for
+          the ~20% of NPIs whose source rows carry no credentials
+          string (nurse practitioners and other mid-level providers
+          often have `NULL` here). Collapsed with the same
+          most-frequent + alphabetical tiebreak as
+          `primary_specialty`.
+      - name: medical_school
+        description: |
+          Name of the medical school reported by the clinician;
+          `NULL` for non-physician clinicians. Same deterministic
+          collapse rule as `provider_last_name` (2 NPIs vary in
+          the 2026-07-31 vintage).
+      - name: graduation_year
+        description: |
+          Year the clinician graduated from `medical_school`. May
+          be a future year (through 2036 in the current vintage)
+          for residents still in training.
+      - name: primary_specialty
+        description: |
+          Primary CMS specialty (e.g. `INTERNAL MEDICINE`). See
+          the model description for the multi-value collapse rule.
+          `NULL` only for the 2 NPIs in the 2026-07-31 vintage
+          with no non-null `pri_spec` across any of their source
+          rows.
+      - name: offers_telehealth
+        description: |
+          `TRUE` when CMS marks the clinician as billing
+          telehealth-eligible codes on any of their enrollment
+          rows; `NULL` when every source row has a blank flag
+          (which does not affirmatively mean the clinician does
+          not offer telehealth). Two-state — the raw `telehlth`
+          column is strictly `Y` or blank, so `FALSE` never
+          appears.
+      - name: primary_organization_pac_id
+        description: |
+          PECOS organization PAC ID of the clinician's primary
+          practice group — the organization with the most source
+          rows for this NPI. `NULL` for the ~14% of NPIs with no
+          organization row (solo-practice clinicians).
+      - name: primary_facility_name
+        description: |
+          Name of the primary practice-location organization
+          (co-populated with `primary_organization_pac_id`).
+      - name: practice_location_count
+        description: |
+          Distinct `address_id` values across the NPI's source
+          rows — the number of physical practice locations CMS
+          reports for this clinician.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: organization_count
+        description: |
+          Distinct `organization_pac_id` values across the NPI's
+          source rows (excludes `NULL` — solo-practice rows are
+          not counted). `0` for the ~14% of NPIs with no
+          organization affiliation.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: practice_state_count
+        description: |
+          Distinct `state` values across the NPI's source rows —
+          how many states the clinician practices in.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: enrollment_count
+        description: |
+          Distinct `individual_enrollment_id` values across the
+          NPI's source rows — how many PECOS enrollment records
+          the clinician holds. `0` for two NPIs in the 2026-07-31
+          vintage (`1093200974`, `1386263200`) whose source rows
+          carry a blank `ind_enrl_id`; every other NPI has at
+          least one.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: as_of
+        description: |
+          Snapshot vintage: the upstream `modified` date CMS
+          reported for the Doctors and Clinicians National
+          Downloadable file at capture time (from
+          `stg_cms__dataset_vintages`). Constant across rows —
+          the whole dimension comes from one snapshot.
+        data_tests:
+          - not_null
+
+  - name: bridge_clinician_facility
+    description: |
+      Clinician-to-facility affiliation edges, conformed from
+      `stg_cms__doctors_and_clinicians_facility_affiliations`. One
+      row per (`NPI`, `individual_pac_id`, `facility_ccn`) — the
+      same three-column grain the staging model asserts unique on
+      (2,253,582 rows in the 2026-07-31 vintage). Facility CCNs
+      cover
+      seven families and use different character classes across
+      them (numeric for hospitals, alphanumeric with a letter in
+      position three for nursing homes, etc.), so the bridge
+      exposes a discriminator column (`facility_type`) alongside
+      the raw `facility_ccn` and per-family typed FK columns
+      (`hospital_ccn`, `nursing_home_ccn`,
+      `home_health_agency_ccn`, `hospice_ccn`) that are populated
+      only when `facility_type` matches. The typed columns let
+      downstream models join to a specific dim on a single key
+      without an extra `facility_type` filter.
+
+      **`NPI` FK to `dim_clinician`** is kept at **warn** severity:
+      29 NPIs (80 affiliation rows, ~0.004% of the bridge) appear
+      here but not in `dim_clinician`, because the two CMS files
+      are snapshotted independently — the affiliations file lags
+      or leads the national downloadable file by up to a week,
+      and clinicians who enrolled or de-enrolled between the two
+      snapshot dates show up in one but not the other. Same
+      warn-first pattern used by
+      `fct_hospital_utilization.ccn → dim_hospital` (documented
+      steady-state WARN=1 in Sprint D's PR #112).
+
+      **`hospital_ccn` FK to `dim_hospital`** is at **warn**
+      severity: 52 of 4,607 distinct hospital CCNs (~1.1%) in the
+      affiliations file have no `dim_hospital` row — 18,190
+      affiliation rows (~1.0% of the 1.91M hospital-typed rows in
+      the bridge). None of the 52 carry the F-suffix / letter
+      prefixes documented in PR #112 (all are pure six-digit
+      numeric, 41 with third-character `0` and 11 with third-
+      character `1`); they fall into the same three categories the
+      PR #112 utilization gap analysis established (PPS-exempt
+      specialty facilities Care Compare structurally omits,
+      re-certified CCNs whose successor sits in `dim_hospital`
+      under a new key, and closed / merged short-term-acute
+      hospitals).
+
+      **`nursing_home_ccn` FK to `dim_nursing_home`** is at
+      **warn** severity: 1,404 of 14,477 distinct nursing-home
+      CCNs (~9.7%) have no `dim_nursing_home` row — 4,554
+      affiliation rows (~11% of the 40,775 nursing-home-typed
+      rows). These are dominated by two format patterns
+      `dim_nursing_home` structurally excludes — 1,239 CCNs whose
+      third character is `Z` (ICF/IID intermediate-care facilities
+      for individuals with intellectual disabilities, certified
+      under Medicaid but not Medicare and not on the Care Compare
+      Provider Info file) and 131 with third character `U` (swing-
+      bed distinct-part units at CAHs, certified for skilled-
+      nursing swing beds but not carried in the SNF Provider Info
+      file). The remaining 34 CCNs (33 numeric — 31 with
+      third character `5`, 2 with `6` — plus one third-character
+      `W`) are re-certified or closed SNFs, matching the
+      utilization gap pattern from PR #112.
+
+      **`home_health_agency_ccn` FK to `dim_home_health_agency`**
+      is at **warn** severity: 23 of 7,723 distinct HHA CCNs
+      (~0.3%) have no `dim_home_health_agency` row — 83
+      affiliation rows (~0.04% of the 212,423 HHA-typed rows),
+      same snapshot-lag category as the hospital gap.
+
+      **`hospice_ccn` FK to `dim_hospice`** is at **warn**
+      severity: 115 of 5,389 distinct hospice CCNs (~2.1%) have
+      no `dim_hospice` row — 160 affiliation rows (~0.4% of the
+      41,831 hospice-typed rows), same snapshot-lag category.
+
+      Dialysis facilities, IRFs, and LTCHs have no dim in the
+      warehouse (their rows carry the raw CCN on `facility_ccn`
+      with `facility_type` but no typed FK column), so those
+      1,911,811 + 21,281 + 19,490 + 5,971 rows only get their
+      FK-family tests when a future sprint adds the missing dims.
+    columns:
+      - name: npi
+        description: |
+          National Provider Identifier of the clinician, zero-
+          padded ten-digit text. Foreign key to
+          `dim_clinician.npi` at **warn** severity — see the
+          model description for the orphan explanation.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{10}$'
+          - relationships:
+              arguments:
+                to: ref('dim_clinician')
+                field: npi
+              config:
+                # 29 NPIs / 80 rows lag between the two source
+                # snapshots — same warn-first pattern used by
+                # fct_hospital_utilization.ccn → dim_hospital.
+                severity: warn
+      - name: individual_pac_id
+        description: |
+          PECOS individual PAC ID for the clinician's enrollment
+          record. Part of the composite key; a clinician with
+          two active enrollments at the same facility appears on
+          two rows here.
+        data_tests:
+          - not_null
+      - name: facility_type
+        description: |
+          Facility family the CCN belongs to. Drives which typed
+          FK column is populated.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - "Hospital"
+                  - "Home health agency"
+                  - "Hospice"
+                  - "Nursing home"
+                  - "Dialysis facility"
+                  - "Inpatient rehabilitation facility"
+                  - "Long-term care hospital"
+      - name: facility_ccn
+        description: |
+          CMS Certification Number of the affiliated facility,
+          uppercased and trimmed. Always populated — the join
+          key for the three CCN families with no dim yet
+          (dialysis, IRF, LTCH), and the raw source of the four
+          typed FK columns below.
+        data_tests:
+          - not_null
+      - name: facility_unit_ccn
+        description: |
+          Sub-unit CCN, populated only for the ~9K rows where a
+          hospital breaks its affiliation into distinct service
+          units. `NULL` for the vast majority of rows.
+      - name: hospital_ccn
+        description: |
+          Populated when `facility_type = 'Hospital'`; `NULL`
+          otherwise. Foreign key to `dim_hospital.ccn` at
+          **warn** severity — 52 of 4,607 distinct hospital
+          CCNs (~1.1%) have no `dim_hospital` row, covering
+          18,190 affiliation rows (~1.0% of the hospital-typed
+          rows). Same three-category gap documented on
+          `fct_hospital_utilization` in PR #112.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_hospital')
+                field: ccn
+              config:
+                # Warn (not error) is the intended steady state
+                # — PPS-exempt facilities Care Compare excludes,
+                # re-certified CCNs, and closed hospitals.
+                severity: warn
+      - name: nursing_home_ccn
+        description: |
+          Populated when `facility_type = 'Nursing home'`;
+          `NULL` otherwise. Foreign key to `dim_nursing_home.ccn`
+          at **warn** severity — 1,404 of 14,477 distinct
+          nursing-home CCNs (~9.7%) have no `dim_nursing_home`
+          row, covering 4,554 affiliation rows (~11% of the
+          nursing-home-typed rows). Dominated by 1,239
+          `Z`-position-3 ICF/IID codes and 131 `U`-position-3
+          swing-bed distinct-part units that `dim_nursing_home`
+          structurally excludes.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_nursing_home')
+                field: ccn
+              config:
+                # Warn (not error): ICF/IID and swing-bed CCNs
+                # aren't SNFs — they're not on the Care Compare
+                # Provider Info file that seeds dim_nursing_home.
+                severity: warn
+      - name: home_health_agency_ccn
+        description: |
+          Populated when
+          `facility_type = 'Home health agency'`; `NULL`
+          otherwise. Foreign key to
+          `dim_home_health_agency.ccn` at **warn** severity —
+          23 of 7,723 distinct HHA CCNs (~0.3%) have no
+          `dim_home_health_agency` row, covering 83
+          affiliation rows (~0.04% of the HHA-typed rows).
+          Matches the snapshot-lag pattern for the other
+          facility families.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_home_health_agency')
+                field: ccn
+              config:
+                severity: warn
+      - name: hospice_ccn
+        description: |
+          Populated when `facility_type = 'Hospice'`; `NULL`
+          otherwise. Foreign key to `dim_hospice.ccn` at
+          **warn** severity — 115 of 5,389 distinct hospice
+          CCNs (~2.1%) have no `dim_hospice` row, covering 160
+          affiliation rows (~0.4% of the hospice-typed rows).
+          Matches the snapshot-lag pattern for the other
+          facility families.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_hospice')
+                field: ccn
+              config:
+                severity: warn
+      - name: as_of
+        description: |
+          Snapshot vintage: the upstream `modified` date CMS
+          reported for the Doctors and Clinicians Facility
+          Affiliations file at capture time (from
+          `stg_cms__dataset_vintages`). Constant across rows —
+          the whole bridge comes from one snapshot.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - npi
+              - individual_pac_id
+              - facility_ccn
