@@ -24,6 +24,11 @@ with dbt on DuckDB from CMS public datasets.
   ratings, ownership, OASIS / claims quality vs national benchmarks
   for home-health agencies, and CAHPS family-caregiver survey plus
   Hospice Item Set process measures for hospices.
+- [Clinicians and industry payments](/clinicians) — Open Payments'
+  2024 general-payment file joined to the clinician roster,
+  Part B utilization, and Part D prescribing: dollar
+  concentration, top payers and specialties, and observational
+  associations between industry payments and prescribing volume.
 
 ## Warehouse coverage
 
@@ -120,6 +125,12 @@ select
     cast(count(case when in_part_b and in_part_d then 1 end) as varchar)
         || ' in both programs'
 from cms.dim_drug
+union all
+select
+    'fct_industry_payments',
+    records,
+    cast(payment_year as varchar) || ' program year'
+from cms.clinician_payment_stats
 order by mart
 ```
 
