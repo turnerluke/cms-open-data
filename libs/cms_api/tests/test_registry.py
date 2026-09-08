@@ -116,6 +116,49 @@ def test_dkan_provider_data_spec_rejects_path() -> None:
         )
 
 
+def test_dkan_provider_bulk_spec_requires_dataset_id() -> None:
+    """A dkan_provider_bulk row missing dataset_id fails validation."""
+    with pytest.raises(ValueError, match="dataset_id"):
+        DatasetSpec.model_validate(
+            {
+                "key": "bad_provider_bulk",
+                "source": "dkan_provider_bulk",
+                "description": "x",
+                "group": "cms_raw_provider_compare",
+            },
+        )
+
+
+def test_dkan_provider_bulk_spec_rejects_year() -> None:
+    """dkan_provider_bulk rows don't select a year — the whole CSV is one snapshot."""
+    with pytest.raises(ValueError, match="must not set"):
+        DatasetSpec.model_validate(
+            {
+                "key": "weird_provider_bulk",
+                "source": "dkan_provider_bulk",
+                "dataset_id": "mj5m-pzi6",
+                "year": 2024,
+                "description": "x",
+                "group": "cms_raw_provider_compare",
+            },
+        )
+
+
+def test_dkan_provider_bulk_spec_rejects_path() -> None:
+    """A dkan_provider_bulk row with `path` set fails validation."""
+    with pytest.raises(ValueError, match="must not set"):
+        DatasetSpec.model_validate(
+            {
+                "key": "weird_provider_bulk_path",
+                "source": "dkan_provider_bulk",
+                "dataset_id": "mj5m-pzi6",
+                "path": "/api/x.json",
+                "description": "x",
+                "group": "cms_raw_provider_compare",
+            },
+        )
+
+
 def test_dkan_data_api_bulk_spec_requires_dataset_id() -> None:
     """A dkan_data_api_bulk row missing dataset_id fails validation."""
     with pytest.raises(ValueError, match="dataset_id"):

@@ -66,6 +66,7 @@ _NON_REGISTRY_ASSET_SOURCES = {
     "dkan_data_api_bulk",
     "dkan_medicaid_bulk",
     "dkan_open_payments_bulk",
+    "dkan_provider_bulk",
     "dkan_healthcare_gov_zip",
 }
 
@@ -75,9 +76,9 @@ def test_one_asset_emitted_per_registry_row() -> None:
 
     Sources with a different fetcher contract live on peer modules and are
     checked there instead: bulk-CSV (``dkan_data_api_bulk``,
-    ``dkan_medicaid_bulk``, ``dkan_open_payments_bulk``) on
-    ``bulk_csv_assets``; QHP ZIP-XLSX (``dkan_healthcare_gov_zip``) on
-    ``qhp_zip_assets``.
+    ``dkan_medicaid_bulk``, ``dkan_open_payments_bulk``,
+    ``dkan_provider_bulk``) on ``bulk_csv_assets``; QHP ZIP-XLSX
+    (``dkan_healthcare_gov_zip``) on ``qhp_zip_assets``.
     """
     for spec in load_registry():
         if spec.source in _NON_REGISTRY_ASSET_SOURCES:

@@ -230,6 +230,7 @@ def _data_api_dates(spec: DatasetSpec) -> _UpstreamDates:
 # returns — there's currently no payload shape to test against.
 _UPSTREAM_FETCHERS: dict[str, Callable[[DatasetSpec], _UpstreamDates]] = {
     "dkan_provider_data": _provider_data_dates,
+    "dkan_provider_bulk": _provider_data_dates,
     "dkan_data_api_bulk": _data_api_dates,
     "dkan_medicaid_bulk": _medicaid_dates,
     "dkan_open_payments_bulk": _open_payments_dates,

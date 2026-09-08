@@ -8,6 +8,7 @@ from cms_api.dkan import (
     get_data_api_csv_url,
     get_dkan_dataset_csv_url,
     get_dkan_dataset_zip_url,
+    get_provider_data_csv_url,
     iter_provider_data_catalog,
 )
 import httpx
@@ -709,3 +710,138 @@ def test_get_dkan_dataset_zip_url_rejects_non_list_distribution() -> None:
 
     with pytest.raises(TypeError, match="distribution"):
         get_dkan_dataset_zip_url(QHP_INDIVIDUAL_MEDICAL_UUID, base_url=HEALTHCARE_GOV_DKAN_BASE_URL)
+
+
+# ---------------------------------------------------------------------------
+# get_provider_data_csv_url — Provider Data Catalog CSV downloadURL resolution
+# ---------------------------------------------------------------------------
+
+
+DOCTORS_FACILITY_AFFILIATIONS_UUID = "27ea-46a8"
+DOCTORS_FACILITY_AFFILIATIONS_METASTORE_PATH = (
+    f"/provider-data/api/1/metastore/schemas/dataset/items/{DOCTORS_FACILITY_AFFILIATIONS_UUID}"
+)
+DOCTORS_FACILITY_AFFILIATIONS_CSV_URL = (
+    "https://data.cms.gov/provider-data/sites/default/files/resources/Facility_Affiliation.csv"
+)
+DOCTORS_FACILITY_AFFILIATIONS_DICT_URL = (
+    "https://data.cms.gov/provider-data/sites/default/files/data_dictionaries/facility_affiliation.pdf"
+)
+
+
+def _provider_data_metastore_payload(*, distributions: list[dict[str, object]] | None = None) -> dict[str, object]:
+    """Build a Provider Data Catalog metastore record with the supplied distributions."""
+    return {
+        "@type": "dcat:Dataset",
+        "identifier": DOCTORS_FACILITY_AFFILIATIONS_UUID,
+        "title": "Doctors and Clinicians Facility Affiliation Data",
+        "distribution": distributions if distributions is not None else [],
+    }
+
+
+@respx.mock
+def test_get_provider_data_csv_url_returns_text_csv_distribution() -> None:
+    """The text/csv distribution's `downloadURL` is returned verbatim.
+
+    This is the load-bearing property that replaces the paginated DKAN
+    datastore path for multi-million-row Provider Data Catalog datasets:
+    one metastore GET returns the direct CSV URL.
+    """
+    respx.get(f"{PROVIDER_DATA_BASE_URL}{DOCTORS_FACILITY_AFFILIATIONS_METASTORE_PATH}").respond(
+        json=_provider_data_metastore_payload(
+            distributions=[
+                {
+                    "@type": "dcat:Distribution",
+                    "mediaType": "text/csv",
+                    "downloadURL": DOCTORS_FACILITY_AFFILIATIONS_CSV_URL,
+                },
+            ],
+        ),
+    )
+
+    assert get_provider_data_csv_url(DOCTORS_FACILITY_AFFILIATIONS_UUID) == DOCTORS_FACILITY_AFFILIATIONS_CSV_URL
+
+
+@respx.mock
+def test_get_provider_data_csv_url_skips_non_csv_distributions() -> None:
+    """A leading data-dictionary PDF must not shadow the CSV distribution.
+
+    Filtering on `mediaType == "text/csv"` matters because CMS sometimes
+    attaches ancillary distributions (data dictionaries, PDFs) alongside
+    the CSV; taking `distribution[0]` blindly would hand back the PDF the
+    day such a sibling gets added.
+    """
+    respx.get(f"{PROVIDER_DATA_BASE_URL}{DOCTORS_FACILITY_AFFILIATIONS_METASTORE_PATH}").respond(
+        json=_provider_data_metastore_payload(
+            distributions=[
+                {
+                    "@type": "dcat:Distribution",
+                    "mediaType": "application/pdf",
+                    "downloadURL": DOCTORS_FACILITY_AFFILIATIONS_DICT_URL,
+                },
+                {
+                    "@type": "dcat:Distribution",
+                    "mediaType": "text/csv",
+                    "downloadURL": DOCTORS_FACILITY_AFFILIATIONS_CSV_URL,
+                },
+            ],
+        ),
+    )
+
+    assert get_provider_data_csv_url(DOCTORS_FACILITY_AFFILIATIONS_UUID) == DOCTORS_FACILITY_AFFILIATIONS_CSV_URL
+
+
+@respx.mock
+def test_get_provider_data_csv_url_raises_when_no_csv_distribution() -> None:
+    """A dataset with only non-CSV distributions raises `KeyError`, not silent fallback."""
+    respx.get(f"{PROVIDER_DATA_BASE_URL}{DOCTORS_FACILITY_AFFILIATIONS_METASTORE_PATH}").respond(
+        json=_provider_data_metastore_payload(
+            distributions=[
+                {
+                    "@type": "dcat:Distribution",
+                    "mediaType": "application/pdf",
+                    "downloadURL": DOCTORS_FACILITY_AFFILIATIONS_DICT_URL,
+                },
+            ],
+        ),
+    )
+
+    with pytest.raises(KeyError, match="text/csv"):
+        get_provider_data_csv_url(DOCTORS_FACILITY_AFFILIATIONS_UUID)
+
+
+@respx.mock
+def test_get_provider_data_csv_url_raises_when_csv_missing_download_url() -> None:
+    """A text/csv distribution without a downloadURL is also a KeyError."""
+    respx.get(f"{PROVIDER_DATA_BASE_URL}{DOCTORS_FACILITY_AFFILIATIONS_METASTORE_PATH}").respond(
+        json=_provider_data_metastore_payload(
+            distributions=[
+                {"@type": "dcat:Distribution", "mediaType": "text/csv"},
+            ],
+        ),
+    )
+
+    with pytest.raises(KeyError, match="text/csv"):
+        get_provider_data_csv_url(DOCTORS_FACILITY_AFFILIATIONS_UUID)
+
+
+@respx.mock
+def test_get_provider_data_csv_url_rejects_non_object_payload() -> None:
+    """A top-level array metastore response is malformed — surface loudly."""
+    respx.get(f"{PROVIDER_DATA_BASE_URL}{DOCTORS_FACILITY_AFFILIATIONS_METASTORE_PATH}").respond(
+        json=["unexpected"],
+    )
+
+    with pytest.raises(TypeError, match="provider-data metastore"):
+        get_provider_data_csv_url(DOCTORS_FACILITY_AFFILIATIONS_UUID)
+
+
+@respx.mock
+def test_get_provider_data_csv_url_rejects_non_list_distribution() -> None:
+    """`distribution` must be a list — anything else is malformed."""
+    respx.get(f"{PROVIDER_DATA_BASE_URL}{DOCTORS_FACILITY_AFFILIATIONS_METASTORE_PATH}").respond(
+        json={"@type": "dcat:Dataset", "distribution": {"oops": "object"}},
+    )
+
+    with pytest.raises(TypeError, match="distribution"):
+        get_provider_data_csv_url(DOCTORS_FACILITY_AFFILIATIONS_UUID)
