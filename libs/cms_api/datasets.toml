@@ -186,14 +186,14 @@ group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "doctors_and_clinicians_national_downloadable"
-source = "dkan_provider_data"
+source = "dkan_provider_bulk"
 dataset_id = "mj5m-pzi6"
 description = "Doctors and Clinicians National Downloadable File (DKAN dataset `mj5m-pzi6`). Landed by the `cms_doctors_and_clinicians_national_downloadable` Dagster asset."
 group = "cms_raw_provider_compare"
 
 [[dataset]]
 key = "doctors_and_clinicians_facility_affiliations"
-source = "dkan_provider_data"
+source = "dkan_provider_bulk"
 dataset_id = "27ea-46a8"
 description = "Doctors and Clinicians Facility Affiliation Data (DKAN dataset `27ea-46a8`). Landed by the `cms_doctors_and_clinicians_facility_affiliations` Dagster asset."
 group = "cms_raw_provider_compare"

@@ -39,7 +39,12 @@ SAMPLE_CSV = (
 FAKE_CSV_URL = "https://fixture.test/bulk.csv"
 
 
-_BULK_CSV_SOURCES = {"dkan_data_api_bulk", "dkan_medicaid_bulk", "dkan_open_payments_bulk"}
+_BULK_CSV_SOURCES = {
+    "dkan_data_api_bulk",
+    "dkan_medicaid_bulk",
+    "dkan_open_payments_bulk",
+    "dkan_provider_bulk",
+}
 
 
 _SIMULATED_CONVERT_MESSAGE = "simulated convert failure"
@@ -358,3 +363,53 @@ def test_bare_metastore_bulk_asset_streams_csv_to_parquet(
     table = pq.read_table(parquets[0])
     assert table.num_rows == 2
     assert case.expected_column in table.column_names
+
+
+@respx.mock
+def test_provider_bulk_asset_streams_csv_to_parquet(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`dkan_provider_bulk` rows resolve via `get_provider_data_csv_url` (no host param).
+
+    Confirms the Doctors & Clinicians files (millions of rows each) now
+    ride the bulk-CSV factory rather than the JSON-paginated one, which
+    is what avoids the rate-limit storm on data.cms.gov that the change
+    exists to fix.
+    """
+    monkeypatch.setenv(CMS_RAW_ROOT_ENV, str(tmp_path))
+
+    captured: list[str] = []
+
+    def fake_url(dataset_id: str) -> str:
+        captured.append(dataset_id)
+        return FAKE_CSV_URL
+
+    monkeypatch.setattr(bulk_csv_assets, "get_provider_data_csv_url", fake_url)
+    # Provider Data Catalog CSVs ship with "human" headers (title case
+    # + spaces); the asset relies on `normalize_names=True` to land
+    # snake_case column names because the dbt staging models (and the
+    # previously hand-seeded parquets) use snake_case.
+    _serve_csv(
+        respx.mock,
+        "NPI,Provider Last Name,Provider First Name\n1234567890,Doe,Jane\n0987654321,Roe,John\n",
+    )
+
+    spec = _spec_for_source("dkan_provider_bulk")
+    asset_def = _bulk_asset(spec)
+
+    result = materialize([asset_def])
+
+    assert result.success
+    assert captured == [spec.dataset_id]
+    parquets = list((tmp_path / f"cms_{spec.key}").glob("*.parquet"))
+    assert len(parquets) == 1
+    table = pq.read_table(parquets[0])
+    assert table.num_rows == 2
+    # Load-bearing: original CSV headers ("NPI", "Provider Last Name")
+    # must land as snake_case ("npi", "provider_last_name") so dbt's
+    # `stg_cms__doctors_and_clinicians_*` staging models read them by
+    # the same names they used against the seeded parquets.
+    assert "npi" in table.column_names
+    assert "provider_last_name" in table.column_names
+    assert "NPI" not in table.column_names

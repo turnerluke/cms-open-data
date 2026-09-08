@@ -268,6 +268,53 @@ def get_data_api_csv_url(dataset_id: str, *, year: int | None = None) -> str:
     return by_year[year]
 
 
+def get_provider_data_csv_url(dataset_id: str) -> str:
+    """Return the CSV ``downloadURL`` for a Provider Data Catalog dataset.
+
+    The Provider Data Catalog exposes a direct CSV ``downloadURL`` on its
+    metastore record for every dataset. When queried without the
+    ``show-reference-ids`` parameter, DKAN returns the de-referenced
+    ``dcat:Distribution`` fields (``mediaType``, ``downloadURL``, …) —
+    exactly what a bulk-CSV loader needs, and cheap to fetch (one GET).
+
+    Filtering on ``mediaType == "text/csv"`` matters because CMS
+    occasionally attaches additional distributions (data dictionaries,
+    PDFs) alongside the CSV; taking ``distribution[0]`` blindly would
+    hand back a PDF the day a dictionary got added.
+
+    Args:
+        dataset_id: Provider Data Catalog dataset UUID (e.g.
+            ``"mj5m-pzi6"`` for the Doctors and Clinicians National
+            Downloadable File, ``"27ea-46a8"`` for Facility Affiliations).
+
+    Raises:
+        KeyError: No ``text/csv`` distribution with a ``downloadURL``
+            string was found on the metastore record.
+        TypeError: The metastore payload is shaped unexpectedly.
+
+    """
+    path = _METASTORE_PATH_TEMPLATE.format(dataset_id=dataset_id)
+    with build_client(base_url=PROVIDER_DATA_BASE_URL) as client:
+        payload: JsonValue = request_json(client, "GET", path)
+    if not isinstance(payload, dict):
+        msg = f"expected provider-data metastore payload to be an object, got {type(payload).__name__}"
+        raise TypeError(msg)
+    distributions: JsonValue = payload.get("distribution", [])
+    if not isinstance(distributions, list):
+        msg = f"expected `distribution` to be a list, got {type(distributions).__name__}"
+        raise TypeError(msg)
+    for entry in distributions:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("mediaType") != _CSV_MEDIA_TYPE:
+            continue
+        url: JsonValue = entry.get("downloadURL")
+        if isinstance(url, str) and url:
+            return url
+    msg = f"provider-data dataset {dataset_id!r} has no text/csv distribution with a downloadURL"
+    raise KeyError(msg)
+
+
 def get_dkan_dataset_csv_url(dataset_id: str, *, base_url: str) -> str:
     """Return the CSV ``downloadURL`` for a bare-metastore DKAN dataset.
 

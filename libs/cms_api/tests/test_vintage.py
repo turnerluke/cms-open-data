@@ -193,6 +193,36 @@ def test_bare_metastore_vintage_reads_dates(source: str, dataset_id: str, base_u
     assert vintage.released is None
 
 
+@respx.mock
+def test_dkan_provider_bulk_vintage_reuses_provider_data_metastore() -> None:
+    """`dkan_provider_bulk` and `dkan_provider_data` share one metastore-vintage path.
+
+    The bulk-CSV path only changes how rows are downloaded (direct CSV
+    vs paginated JSON) — the metastore host/shape is identical, so the
+    same fetcher lands the same dates.
+    """
+    respx.get(PROVIDER_METASTORE_URL).respond(
+        json={
+            "identifier": PROVIDER_DATASET_ID,
+            "issued": "2025-01-08",
+            "modified": "2026-07-22",
+        },
+    )
+    spec = DatasetSpec(
+        key="doctors_and_clinicians_facility_affiliations",
+        source="dkan_provider_bulk",
+        dataset_id=PROVIDER_DATASET_ID,
+        description="Fixture.",
+        group="cms_raw_provider_compare",
+    )
+
+    vintage = fetch_dataset_vintage(spec)
+
+    assert vintage.source_family == "dkan_provider_bulk"
+    assert vintage.modified == date(2026, 7, 22)
+    assert vintage.issued == date(2025, 1, 8)
+
+
 def test_healthcare_gov_vintage_is_local_only() -> None:
     """Sources with no upstream metadata get capture-time-only vintages, offline."""
     spec = DatasetSpec(

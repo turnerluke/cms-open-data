@@ -8,6 +8,7 @@ from .dkan import (
     get_data_api_csv_url,
     get_dkan_dataset_csv_url,
     get_dkan_dataset_zip_url,
+    get_provider_data_csv_url,
     iter_provider_data_catalog,
 )
 from .healthcare_gov import Article, GlossaryTerm, get_articles, get_glossary, get_static_json
@@ -40,6 +41,7 @@ __all__ = [
     "get_dkan_dataset_zip_url",
     "get_glossary",
     "get_provider_by_npi",
+    "get_provider_data_csv_url",
     "get_static_json",
     "iter_dataset",
     "iter_provider_data_catalog",
