@@ -413,3 +413,100 @@ def test_provider_bulk_asset_streams_csv_to_parquet(
     assert "npi" in table.column_names
     assert "provider_last_name" in table.column_names
     assert "NPI" not in table.column_names
+
+
+@respx.mock
+def test_provider_bulk_asset_lands_all_columns_as_varchar(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Provider Data Catalog columns must land as VARCHAR, even all-numeric ones.
+
+    This pins the regression the ``all_varchar=True`` fix addresses:
+    the seeded provider-data parquets are all-VARCHAR for every column,
+    and the ``stg_cms__doctors_and_clinicians_*`` staging models own
+    all typing via ``nullif(trim(col), '')`` chains. If a column like
+    ``telephone_number`` (only digits in the wild) sniffs as BIGINT,
+    ``trim(BIGINT)`` is a binder error and the staging model fails.
+    Also load-bearing: a numeric-looking ``zip_code`` column sniffed
+    as BIGINT would silently drop the leading zero from every New
+    England ZIP — so the leading-zero value here must round-trip
+    verbatim, not become the integer ``1234``.
+    """
+    monkeypatch.setenv(CMS_RAW_ROOT_ENV, str(tmp_path))
+    monkeypatch.setattr(
+        bulk_csv_assets,
+        "get_provider_data_csv_url",
+        lambda dataset_id: FAKE_CSV_URL,
+    )
+    _serve_csv(
+        respx.mock,
+        "NPI,Telephone Number,Zip Code\n1234567890,5551234567,01234\n0987654321,5559876543,02115\n",
+    )
+
+    spec = _spec_for_source("dkan_provider_bulk")
+    asset_def = _bulk_asset(spec)
+
+    result = materialize([asset_def])
+    assert result.success
+
+    parquets = list((tmp_path / f"cms_{spec.key}").glob("*.parquet"))
+    assert len(parquets) == 1
+    table = pq.read_table(parquets[0])
+    # Every column must be VARCHAR — this is the exact shape the dbt
+    # staging models expect and the shape the seeded parquets carry.
+    for field in table.schema:
+        assert str(field.type) == "string", f"column {field.name!r} landed as {field.type}, expected string/VARCHAR"
+    # Leading zero survived the load — proves types were not sniffed.
+    assert table.column("zip_code").to_pylist() == ["01234", "02115"]
+    # And a purely-numeric column stays as text so the staging model's
+    # `trim(telephone_number)` doesn't hit a binder error.
+    assert table.column("telephone_number").to_pylist() == ["5551234567", "5559876543"]
+
+
+@respx.mock
+def test_non_provider_bulk_asset_still_sniffs_numeric_types(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Non-provider bulk sources keep DuckDB's numeric type sniffing.
+
+    The Physician / Part D / Open Payments landed parquets in prod
+    carry sniffed types (BIGINT, DOUBLE), and their dbt staging models
+    are built against those types. This pins that behaviour so the
+    provider-only ``all_varchar`` opt-in doesn't leak to other sources.
+    """
+    monkeypatch.setenv(CMS_RAW_ROOT_ENV, str(tmp_path))
+    monkeypatch.setattr(
+        bulk_csv_assets,
+        "get_data_api_csv_url",
+        lambda dataset_id, *, year=None: FAKE_CSV_URL,
+    )
+    # All-numeric integer columns with no leading zeros — DuckDB should
+    # sniff these as an integer type. (SAMPLE_CSV won't do; its second
+    # `rndrng_npi` row starts with a zero, which correctly forces
+    # VARCHAR even under type sniffing.)
+    _serve_csv(
+        respx.mock,
+        "rndrng_npi,rndrng_prvdr_last_org_name,rndrng_prvdr_state_abrvtn,bene_unique_cnt\n"
+        "1234567890,Hospital A,CA,1200\n"
+        "1987654321,Hospital B,TX,950\n",
+    )
+
+    spec = _bulk_spec()
+    asset_def = _bulk_asset(spec)
+
+    result = materialize([asset_def])
+    assert result.success
+
+    parquets = list((tmp_path / f"cms_{spec.key}").glob("*.parquet"))
+    assert len(parquets) == 1
+    table = pq.read_table(parquets[0])
+    # `rndrng_npi` and `bene_unique_cnt` are all-numeric-with-no-
+    # leading-zeros in this fixture; without `all_varchar` they must
+    # sniff to an integer type. This is the guard that catches
+    # accidental widening of the provider-bulk opt-in to other sources.
+    npi_type = str(table.schema.field("rndrng_npi").type)
+    cnt_type = str(table.schema.field("bene_unique_cnt").type)
+    assert "int" in npi_type, f"rndrng_npi sniffed as {npi_type}, expected an int type"
+    assert "int" in cnt_type, f"bene_unique_cnt sniffed as {cnt_type}, expected an int type"

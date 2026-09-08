@@ -106,19 +106,38 @@ _RESOLVERS: dict[str, Callable[[DatasetSpec], str]] = {
 }
 
 
-# Sources whose CSV headers are "human" (title-case, spaces) but whose
-# dbt staging models were built against snake_case column names — for
-# these we pass ``normalize_names=True`` to DuckDB so ``NPI`` and
-# ``Provider Last Name`` land as ``npi`` and ``provider_last_name``.
+# Per-source load options for the DuckDB ``read_csv`` call.
 #
-# The Provider Data Catalog is the only current example: the paginated
-# JSON path (``iter_provider_data_catalog``) returns snake_case field
-# names natively, and the seeded parquets in the warehouse (originally
-# hand-materialized from these same CSVs) were normalized to match.
+# Both flags currently switch on exactly the same source
+# (``dkan_provider_bulk``), so a single set drives them; splitting into
+# per-flag sets would just be ceremony. If a future source needs one
+# knob without the other this can grow into a mapping.
+#
+# ``normalize_names=True``: Provider Data Catalog CSVs ship "human"
+# headers (title-case with spaces), but the dbt staging models — and
+# the seeded parquets in the warehouse, which were originally
+# hand-materialized from these same CSVs — use snake_case. Normalizing
+# on load makes ``NPI`` and ``Provider Last Name`` land as ``npi`` and
+# ``provider_last_name``. The paginated JSON path
+# (``iter_provider_data_catalog``) returns snake_case natively, so the
+# staging models were built once for both loaders.
+#
+# ``all_varchar=True``: the seeded provider parquets are all-VARCHAR
+# for every column, and the ``stg_cms__doctors_and_clinicians_*``
+# staging models own all typing (``nullif(trim(col), '')`` chains,
+# then explicit ``cast``s). Letting DuckDB sniff types here breaks the
+# staging models — a numeric-only ``telephone_number`` column sniffs as
+# BIGINT and ``trim(BIGINT)`` is a binder error — and, more insidiously,
+# a numeric-looking ``zip_code`` column would sniff as BIGINT and
+# silently strip the leading zero from every New England ZIP. Landing
+# as VARCHAR mirrors the original hand-materialized shape and lets the
+# staging models remain the single source of typing truth.
+#
 # Other bulk sources (``dkan_data_api_bulk``, ``dkan_medicaid_bulk``,
 # ``dkan_open_payments_bulk``) publish CSVs whose original column names
-# are already what dbt reads, so they stay unnormalized.
-_NORMALIZE_NAMES_SOURCES = {"dkan_provider_bulk"}
+# and sniffed types are what dbt already reads against; they stay on
+# the default (unnormalized, sniffed) load path.
+_PROVIDER_BULK_LOAD_OPTIONS_SOURCES = {"dkan_provider_bulk"}
 
 
 def _stream_download(*, csv_url: str, dest: Path) -> None:
@@ -143,7 +162,13 @@ def _stream_download(*, csv_url: str, dest: Path) -> None:
             fh.write(chunk)
 
 
-def _run_bulk_load(*, csv_url: str, out_path: Path, normalize_names: bool = False) -> int:
+def _run_bulk_load(
+    *,
+    csv_url: str,
+    out_path: Path,
+    normalize_names: bool = False,
+    all_varchar: bool = False,
+) -> int:
     """Download ``csv_url`` to a local temp file, then convert to Parquet.
 
     Uses DuckDB's Python relation API (``read_csv`` + ``write_parquet``)
@@ -159,14 +184,22 @@ def _run_bulk_load(*, csv_url: str, out_path: Path, normalize_names: bool = Fals
     has ~150 000 numeric US ZIPs before the first alphanumeric UK
     postcode, which makes the default sniff pick ``BIGINT`` and then
     fail mid-conversion. A full-file sniff is cheap now that the CSV is
-    local. The row-count is read back from the landed Parquet so a
+    local. When ``all_varchar=True`` the sniff pass no longer decides
+    column types (everything lands as VARCHAR); the parameter is kept
+    uniform because ``read_csv`` still honors it for its structural
+    passes (header/quote detection, row counting) even when types are
+    forced. The row-count is read back from the landed Parquet so a
     header-only CSV trips the same guard as a zero-byte CSV would.
 
     ``normalize_names=True`` lowercases and snake_cases the CSV headers
-    (``"Provider Last Name"`` → ``"provider_last_name"``). Off by
-    default because most bulk-CSV sources' dbt staging models read the
-    original CSV column names; Provider Data Catalog CSVs are the
-    exception (see ``_NORMALIZE_NAMES_SOURCES``).
+    (``"Provider Last Name"`` → ``"provider_last_name"``).
+
+    ``all_varchar=True`` forces every column to land as VARCHAR,
+    bypassing type sniffing entirely. Both flags default off; the
+    Provider Data Catalog is the only source that flips them on today —
+    see ``_PROVIDER_BULK_LOAD_OPTIONS_SOURCES`` for the full rationale
+    (staging models own all typing, and sniffed numeric types would
+    silently corrupt leading-zero ZIP codes).
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
     local_csv = out_path.parent / f".{uuid.uuid4().hex}.csv.download"
@@ -178,6 +211,7 @@ def _run_bulk_load(*, csv_url: str, out_path: Path, normalize_names: bool = Fals
                 header=True,
                 sample_size=-1,
                 normalize_names=normalize_names,
+                all_varchar=all_varchar,
             )
             relation.write_parquet(str(out_path))
             row = con.execute("SELECT COUNT(*) FROM read_parquet(?)", [str(out_path)]).fetchone()
@@ -193,7 +227,7 @@ def _build_asset(spec: DatasetSpec) -> AssetsDefinition:
     """Return a Dagster asset that streams ``spec``'s CSV into Parquet via DuckDB."""
     asset_name = f"{_ASSET_PREFIX}{spec.key}"
     resolve = _RESOLVERS[spec.source]
-    normalize_names = spec.source in _NORMALIZE_NAMES_SOURCES
+    provider_bulk_options = spec.source in _PROVIDER_BULK_LOAD_OPTIONS_SOURCES
 
     @asset(
         name=asset_name,
@@ -205,7 +239,12 @@ def _build_asset(spec: DatasetSpec) -> AssetsDefinition:
         csv_url = resolve(spec)
         context.log.info("Bulk-loading %s from %s", asset_name, csv_url)
         with staged_write(Path(resolve_raw_root()) / asset_name, context.run.run_id) as staged:
-            row_count = _run_bulk_load(csv_url=csv_url, out_path=staged, normalize_names=normalize_names)
+            row_count = _run_bulk_load(
+                csv_url=csv_url,
+                out_path=staged,
+                normalize_names=provider_bulk_options,
+                all_varchar=provider_bulk_options,
+            )
             if row_count == 0:
                 msg = f"{asset_name} produced zero rows; refusing to land empty Parquet"
                 raise RuntimeError(msg)
