@@ -1461,6 +1461,347 @@ models:
           CAHPS measurement window, verbatim (e.g.
           `10/01/2023-09/30/2025`; a single value per vintage).
 
+  - name: stg_cms__doctors_and_clinicians_facility_affiliations
+    description: |
+      Doctors and Clinicians Facility Affiliation Data from CMS Care
+      Compare (DKAN dataset `27ea-46a8`). One row per (NPI,
+      individual PAC ID, facility CCN): the affiliation edges that
+      link a Medicare-enrolled clinician to the hospitals, home
+      health agencies, hospices, nursing homes, dialysis facilities,
+      IRFs, and LTCHs where they practice. `ccn` covers all facility
+      families — hospital CCNs are numeric, nursing-home CCNs
+      contain a letter in position three (e.g. `01A234`), etc. — so
+      downstream joins pick the right dim on `facility_type`.
+      Grain: (`npi`, `individual_pac_id`, `ccn`). No date columns.
+    columns:
+      - name: npi
+        description: |
+          National Provider Identifier of the clinician, kept as
+          zero-padded ten-digit text.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{10}$'
+      - name: individual_pac_id
+        description: |
+          CMS Provider Enrollment Chain and Ownership System
+          (PECOS) individual PAC ID for the clinician. A clinician
+          with multiple enrollment records has one row per PAC ID.
+        data_tests:
+          - not_null
+      - name: provider_last_name
+        description: "Clinician last name (trimmed)."
+      - name: provider_first_name
+        description: "Clinician first name; empty strings become `NULL`."
+      - name: facility_type
+        description: |
+          Facility family the CCN refers to. One of `Hospital`,
+          `Home health agency`, `Hospice`, `Nursing home`,
+          `Dialysis facility`, `Inpatient rehabilitation facility`,
+          `Long-term care hospital`.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - "Hospital"
+                  - "Home health agency"
+                  - "Hospice"
+                  - "Nursing home"
+                  - "Dialysis facility"
+                  - "Inpatient rehabilitation facility"
+                  - "Long-term care hospital"
+      - name: ccn
+        description: |
+          CMS Certification Number of the affiliated facility
+          (`upper(trim(...))`). Character class varies by
+          `facility_type` (numeric for hospitals, alphanumeric for
+          nursing homes), so joins from this column choose the
+          right facility dim on the `facility_type` discriminator.
+        data_tests:
+          - not_null
+      - name: facility_unit_ccn
+        description: |
+          Sub-unit CCN, populated only for the small tail of rows
+          where a hospital breaks its affiliation into distinct
+          service units. Kept for provenance; `NULL` for the vast
+          majority of rows.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - npi
+              - individual_pac_id
+              - ccn
+
+  - name: stg_cms__doctors_and_clinicians_national_downloadable
+    description: |
+      Doctors and Clinicians National Downloadable File from CMS
+      Care Compare (DKAN dataset `mj5m-pzi6`). One row per (NPI,
+      individual enrollment record, organizational PAC, address):
+      clinicians with multiple enrollments, group memberships, or
+      practice locations are listed on multiple lines. Empty
+      strings become `NULL`, the `Y`/blank telehealth and
+      address-line-2 suppression flags map to booleans, `grd_yr`
+      becomes an `int`, and the raw `zip_code` (5 or 9 digits) is
+      split into `zip5` and `zip4` so downstream joins can key on
+      the always-present 5-digit form. Grain: (`npi`,
+      `individual_enrollment_id`, `organization_pac_id`,
+      `address_id`).
+    columns:
+      - name: npi
+        description: |
+          National Provider Identifier of the clinician, kept as
+          zero-padded ten-digit text.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{10}$'
+      - name: individual_pac_id
+        description: |
+          PECOS individual PAC ID; stable across enrollment
+          records for the same clinician.
+        data_tests:
+          - not_null
+      - name: individual_enrollment_id
+        description: |
+          PECOS individual enrollment record ID. A clinician with
+          multiple active Medicare enrollments has one row per
+          `individual_enrollment_id` per practice location.
+      - name: gender
+        description: |
+          Clinician-reported gender: `M`, `F`, or `U` (unreported).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["M", "F", "U"]
+      - name: credentials
+        description: "Credential letters after the clinician's name (e.g. `MD`, `DO`, `NP`)."
+      - name: medical_school
+        description: "Name of the medical school; `NULL` for non-physician clinicians."
+      - name: graduation_year
+        description: |
+          Year the clinician graduated from `medical_school`,
+          `try_cast` to `int`. Includes future years (through
+          2036 in the current vintage) for residents still in
+          training.
+      - name: primary_specialty
+        description: "Primary CMS specialty (e.g. `INTERNAL MEDICINE`)."
+      - name: secondary_specialty_all
+        description: |
+          Pipe-joined concatenation of the populated
+          `secondary_specialty_1..4`, kept verbatim to preserve the
+          upstream ordering used by CMS's search UI.
+      - name: offers_telehealth
+        description: |
+          `TRUE` when CMS marks the clinician as billing
+          telehealth-eligible codes (raw `Telehlth = 'Y'`);
+          `NULL` when the flag is blank (which does not
+          affirmatively mean the clinician does not offer
+          telehealth).
+      - name: facility_name
+        description: |
+          Name of the practice-location organization; `NULL` for
+          solo-practice clinicians (about 10% of rows). Always
+          co-present with `organization_pac_id`.
+      - name: organization_pac_id
+        description: |
+          PECOS organization PAC ID for the practice group;
+          `NULL` for solo-practice rows.
+      - name: organization_member_count
+        description: |
+          Number of clinician members in the organization,
+          `try_cast` to `int`. `NULL` when there is no
+          organization (matches `organization_pac_id`).
+      - name: address_line_2_suppressed
+        description: |
+          `TRUE` when CMS suppressed `address_line_2` because it
+          looked like a PO Box that publishing would leak;
+          `FALSE` otherwise.
+      - name: state
+        description: |
+          Practice-location state abbreviation. Besides the 50
+          states this includes DC, territories, and armed-forces
+          codes.
+        data_tests:
+          - not_null
+      - name: zip5
+        description: |
+          Five-digit ZIP of the practice location, kept as text
+          to preserve leading zeros.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{5}$'
+      - name: zip4
+        description: |
+          ZIP+4 extension when the raw `zip_code` was 9 digits;
+          `NULL` for the ~2% of rows that ship 5-digit ZIPs only.
+      - name: individual_medicare_assignment
+        description: |
+          `Y` if the clinician accepts Medicare assignment for
+          every claim, `M` if only for select claims (Medicare
+          Participation Agreement partial).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Y", "M"]
+      - name: group_medicare_assignment
+        description: |
+          Same `Y`/`M` semantics as
+          `individual_medicare_assignment`, applied at the
+          group-enrollment level.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Y", "M"]
+      - name: address_id
+        description: |
+          CMS-internal surrogate keying rows that share a
+          practice location. With `npi` and
+          `individual_enrollment_id` (and `organization_pac_id`
+          for the multi-org tail) it uniquely identifies a row.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - npi
+              - individual_enrollment_id
+              - organization_pac_id
+              - address_id
+
+  - name: stg_cms__medicare_physician_by_provider
+    description: |
+      Medicare Physician & Other Practitioners — by Provider (CMS
+      data-api/v1 dataset `8889d81e-2ee7-448f-8713-f071038289b5`).
+      One row per rendering NPI summarizing overall Medicare Part
+      B utilization, payments, drug-vs-medical service splits,
+      beneficiary demographics, chronic-condition prevalence, and
+      HCC risk. The bulk CSV covers the latest published data year
+      only and carries no year column, so any provider-year grain
+      must take the year from the dataset vintage. Numerics
+      already arrive typed from the parquet, so staging only
+      renames the abbreviated CMS columns (`Tot_Srvcs` →
+      `total_services`, `Bene_CC_PH_COPD_V2_Pct` →
+      `pct_beneficiaries_copd`, etc.) and zero-pads the NPI to
+      ten-digit text. Grain: `npi`.
+    columns:
+      - name: npi
+        description: |
+          National Provider Identifier of the rendering provider,
+          kept as zero-padded ten-digit text. Primary key.
+        data_tests:
+          - not_null
+          - unique
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{10}$'
+      - name: entity_code
+        description: |
+          `I` for an individual clinician, `O` for an organizational
+          NPI.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["I", "O"]
+      - name: state
+        description: |
+          Provider state abbreviation. Besides the 50 states this
+          includes DC, territories, `XX` (unknown), and `ZZ`
+          (foreign), matching the Part-D prescribers convention.
+        data_tests:
+          - not_null
+      - name: state_fips
+        description: |
+          Two-digit state FIPS code, kept as text to preserve
+          leading zeros.
+      - name: zip5
+        description: |
+          Five-digit ZIP of the provider's practice address, kept
+          as text. Foreign providers (~85 rows) carry non-numeric
+          local-format codes here; the regex test only asserts on
+          the U.S. rows.
+        data_tests:
+          - not_null
+      - name: ruca_code
+        description: |
+          Rural-Urban Commuting Area code of the practice ZIP.
+          Decimal subcodes like `4.1` are meaningful so it stays
+          numeric.
+      - name: country
+        description: |
+          Two-letter country code of the practice address; almost
+          always `US` (99.99% of rows).
+        data_tests:
+          - not_null
+      - name: provider_type
+        description: |
+          CMS specialty of the rendering provider (e.g.
+          `Internal Medicine`, `Nurse Practitioner`).
+      - name: medicare_participating_indicator
+        description: "`Y` if the provider participates in Medicare, `N` otherwise."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Y", "N"]
+      - name: total_beneficiaries
+        description: "Distinct Medicare beneficiaries the provider served in the year."
+        data_tests:
+          - not_null
+      - name: total_services
+        description: "Total Medicare services billed by the provider."
+        data_tests:
+          - not_null
+      - name: total_medicare_payment_amount
+        description: |
+          Total dollars Medicare paid the provider. Always at most
+          `total_medicare_allowed_amount` — enforced by the
+          model-level `dbt_utils.expression_is_true` test.
+      - name: total_medicare_allowed_amount
+        description: |
+          Total dollars Medicare allowed for the provider's
+          services (payment plus beneficiary cost-share).
+      - name: drug_suppression_indicator
+        description: |
+          Three-valued suppression flag for the `drug_*` totals:
+          `*` — CMS suppressed the counts because the drug bene
+          count was 1–10; `#` — counter-suppressed because the
+          medical (non-drug) complement is 1–10 and could be
+          recalculated from the totals; `NULL` — disclosed.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+      - name: medical_suppression_indicator
+        description: |
+          Same `*` / `#` / `NULL` semantics as
+          `drug_suppression_indicator`, applied to the `medical_*`
+          totals.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+      - name: avg_hcc_risk_score
+        description: |
+          Average CMS-HCC risk score of the provider's Medicare
+          beneficiaries (raw `Bene_Avg_Risk_Scre`).
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              total_medicare_payment_amount <= total_medicare_allowed_amount
+              or total_medicare_payment_amount is null
+              or total_medicare_allowed_amount is null
+
   - name: stg_cms__dataset_vintages
     description: |
       One row per extracted dataset with the upstream publication dates
