@@ -274,6 +274,450 @@ models:
         data_tests:
           - not_null
 
+  - name: fct_physician_utilization
+    description: |
+      Medicare Part B utilization and payments for rendering
+      providers, one row per NPI, from
+      `stg_cms__medicare_physician_by_provider`. Grain: `npi`
+      (1,296,739 rows in the 2026-05 snapshot).
+
+      Modeling choices to be aware of:
+
+      - The source file is a single latest-vintage snapshot with no
+        year column, so the fact carries **no `spending_year`**; the
+        snapshot vintage is exposed as `as_of` instead — see the
+        `TODO` in the model about the deferred `npi` × year grain.
+      - The population is broader than the individual-clinician
+        roster: `entity_code` is `'I'` for 1,235,757 individual
+        rendering providers and `'O'` for 60,982 organizational
+        billers (Mass Immunizer Roster Billers, Centralized Flu,
+        Ambulance Service Providers, Ambulatory Surgical Centers,
+        Pharmacies, Clinical Labs, IDTFs, etc.). Both are kept — the
+        fact is the definitive rendering-NPI universe for Part B — but
+        the FK to `dim_clinician` is filtered to `entity_code = 'I'`
+        so it tests only the population `dim_clinician` actually
+        covers. See the `npi` column's description for the orphan
+        breakdown.
+      - Drug and medical splits carry their `*_suppression_indicator`
+        columns through (`'*'` = below CMS disclosure threshold,
+        `'#'` = counter-suppressed, `NULL` = disclosed). Splits are
+        never coalesced to 0 — a suppressed drug row keeps `NULL`
+        drug totals.
+      - Overall utilization totals (`total_services`,
+        `total_medicare_payment_amount`, etc.) and `avg_hcc_risk_score`
+        are populated on every row — CMS does not suppress the
+        top-line summary. Chronic-condition prevalences, however, are
+        suppressed for providers with small beneficiary panels
+        (e.g. `pct_beneficiaries_diabetes` is `NULL` for 219,009
+        rows / 17% of the fact).
+      - All `pct_*` columns are on a **0-1 fraction** scale, so
+        `pct_beneficiaries_dual_eligible` and the chronic-condition
+        prevalences share one unit. The upstream chronic-condition
+        columns are integer percents capped at `75` by CMS privacy
+        rules, so the fractions cap at `0.75` — `accepted_range`
+        tests on each column pin that expectation and would fail if
+        the scale ever flipped back to 0-100.
+      - Only a representative subset of the 25 staging
+        chronic-condition columns is inlined — pull the rest
+        (behavioral health, atrial fibrillation, arthritis,
+        Parkinson's, osteoporosis, stroke, asthma, PTSD, etc.)
+        from `stg_cms__medicare_physician_by_provider` when the
+        analysis needs them.
+    columns:
+      - name: npi
+        description: |
+          National Provider Identifier of the rendering provider,
+          zero-padded ten-digit text. Primary key.
+
+          Foreign key to `dim_clinician`, held at **warn** severity
+          and filtered to `entity_code = 'I'`. In the 2026-05 build
+          the 1,235,757 individual rows produce 104,752 orphans
+          (~8.5%) — clinicians who billed Part B but do not appear
+          in Care Compare's National Downloadable file, which
+          publishes only clinicians actively enrolled in Medicare
+          for consumer look-up. The orphan set spans every specialty
+          proportionally (top orphan groups: Nurse Practitioner
+          19,435; Physician Assistant 13,872; Emergency Medicine
+          11,219; Physical Therapist in Private Practice 11,022;
+          Internal Medicine 6,152), consistent with rendering
+          providers whose enrollment record is stale, terminated,
+          or under a different individual PAC ID than the one Care
+          Compare indexes. **Organizational** NPIs (`entity_code =
+          'O'`, 60,982 rows, all but one absent from
+          `dim_clinician`) are excluded from the test by design —
+          `dim_clinician` is scoped to individual clinicians and
+          could not carry a matching row for a Mass Immunizer
+          Roster Biller or Ambulatory Surgical Center even in
+          principle.
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('dim_clinician')
+                field: npi
+              config:
+                # Warn (not error) is the intended steady state:
+                # organizational NPIs are filtered out via the
+                # `where` below, and the ~8.5% residual among
+                # individual NPIs are billing clinicians absent from
+                # Care Compare's National Downloadable file — a
+                # structural universe gap, not a key defect. A
+                # rewrite/drop would silently discard real Part B
+                # utilization, so the fact keeps every rendering NPI
+                # and accepts the FK gap on individuals.
+                severity: warn
+                where: "entity_code = 'I'"
+      - name: entity_code
+        description: |
+          `'I'` for individual clinicians (1,235,757 rows) or `'O'`
+          for organizational billers (60,982 rows). Governs whether
+          the `dim_clinician` FK applies — see the `npi` column.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["I", "O"]
+      - name: provider_last_org_name
+        description: |
+          Last name for individual providers, organization name for
+          organizational billers. Kept inline for at-a-glance
+          lookups; richer roster attributes live on `dim_clinician`.
+      - name: provider_first_name
+        description: |
+          Provider first name. `NULL` for organizational NPIs
+          (`entity_code = 'O'`).
+      - name: provider_credentials
+        description: |
+          Reported credentials (e.g. `MD`, `NP`, `PA`). `NULL` when
+          the source is blank.
+      - name: provider_type
+        description: |
+          CMS-published provider specialty / entity type (e.g.
+          `Internal Medicine`, `Nurse Practitioner`,
+          `Mass Immunizer Roster Biller`). Not the same taxonomy as
+          `dim_clinician.primary_specialty`, which comes from Care
+          Compare's roster — different providers can carry
+          different specialty strings across the two files.
+      - name: state
+        description: "Provider state abbreviation, including DC and territories."
+      - name: medicare_participating_indicator
+        description: |
+          `'Y'` if the provider accepts assignment on all Medicare
+          claims, `'N'` otherwise.
+      - name: total_hcpcs_codes
+        description: "Distinct HCPCS codes the provider billed under Part B."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_beneficiaries
+        description: "Distinct Medicare beneficiaries treated."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_services
+        description: |
+          Total Part B services rendered (line-item quantity).
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_submitted_charges
+        description: |
+          Total submitted charges across all services, in dollars.
+          Not strictly an upper bound on the allowed amount: in the
+          2026-05 vintage 149 rows have
+          `total_medicare_allowed_amount > total_submitted_charges`
+          (the staging invariant only asserts payment <= allowed),
+          so downstream analysis shouldn't assume the full
+          submitted >= allowed >= payment ordering.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_medicare_allowed_amount
+        description: |
+          Total Medicare-allowed amount (fee-schedule amount plus
+          beneficiary cost-share), in dollars. See
+          `total_submitted_charges` — 149 rows in the current
+          vintage have allowed > submitted.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_medicare_payment_amount
+        description: |
+          Total Medicare payments to the provider (net of
+          beneficiary deductible and coinsurance), in dollars.
+          Guaranteed <= `total_medicare_allowed_amount` by the
+          staging invariant, but see `total_submitted_charges` for
+          the caveat that allowed can exceed submitted.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_medicare_standardized_amount
+        description: |
+          Total payments standardized to remove geographic-price and
+          statutory-adjustment variation, in dollars. Better than
+          the raw payment amount for cross-provider comparisons.
+        data_tests:
+          - not_null
+      - name: drug_suppression_indicator
+        description: |
+          Three-valued. `'*'` means the provider's drug counts were
+          below CMS's disclosure threshold and the drug totals
+          are `NULL`. `'#'` means counter-suppression prevents
+          recalculating drug values from the totals. `NULL` means
+          drug values are disclosed (or the provider billed no
+          Part B drug administrations).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+              config:
+                where: "drug_suppression_indicator is not null"
+      - name: drug_total_hcpcs_codes
+        description: "Distinct Part B drug HCPCS codes billed."
+      - name: drug_total_beneficiaries
+        description: "Distinct beneficiaries with a Part B drug administration."
+      - name: drug_total_services
+        description: "Total Part B drug services rendered."
+      - name: drug_submitted_charges
+        description: "Submitted charges for Part B drug administrations."
+      - name: drug_medicare_allowed_amount
+        description: "Medicare-allowed amount for Part B drug administrations."
+      - name: drug_medicare_payment_amount
+        description: "Medicare payments for Part B drug administrations."
+      - name: drug_medicare_standardized_amount
+        description: "Standardized Medicare payments for Part B drug administrations."
+      - name: medical_suppression_indicator
+        description: |
+          Three-valued, same scheme as `drug_suppression_indicator`
+          but applied to the medical (non-drug) split.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+              config:
+                where: "medical_suppression_indicator is not null"
+      - name: medical_total_hcpcs_codes
+        description: "Distinct medical (non-drug) HCPCS codes billed."
+      - name: medical_total_beneficiaries
+        description: "Distinct beneficiaries with a medical (non-drug) service."
+      - name: medical_total_services
+        description: "Total medical (non-drug) services rendered."
+      - name: medical_submitted_charges
+        description: "Submitted charges for medical (non-drug) services."
+      - name: medical_medicare_allowed_amount
+        description: "Medicare-allowed amount for medical (non-drug) services."
+      - name: medical_medicare_payment_amount
+        description: "Medicare payments for medical (non-drug) services."
+      - name: medical_medicare_standardized_amount
+        description: "Standardized Medicare payments for medical (non-drug) services."
+      - name: avg_beneficiary_age
+        description: "Average age of the provider's beneficiary population."
+      - name: beneficiary_dual_count
+        description: |
+          Beneficiaries dually enrolled in Medicare and Medicaid.
+      - name: beneficiary_nondual_count
+        description: "Beneficiaries not dually enrolled."
+      - name: pct_beneficiaries_dual_eligible
+        description: |
+          `beneficiary_dual_count / (beneficiary_dual_count +
+          beneficiary_nondual_count)` — share of the provider's
+          panel that is dually eligible, on a 0-1 fraction scale
+          (same scale as the `pct_beneficiaries_<condition>`
+          columns below). `NULL` when the denominator is 0 or
+          either input is `NULL`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+      - name: avg_hcc_risk_score
+        description: |
+          Average HCC risk score of the provider's beneficiary
+          population; higher means sicker expected patients. Never
+          `NULL` in the current vintage.
+        data_tests:
+          - not_null
+      - name: pct_beneficiaries_diabetes
+        description: |
+          Share of the provider's beneficiaries with diabetes, on a
+          0-1 fraction scale. CMS publishes this as an integer
+          percent and caps it at `75` for privacy (so the fraction
+          caps at `0.75`); the mart divides by `100.0` to align the
+          scale with `pct_beneficiaries_dual_eligible`. `NULL` when
+          CMS suppresses the count for small panels (~17% of rows).
+          The `accepted_range` test catches a future scale flip.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 0.75
+                inclusive: true
+      - name: pct_beneficiaries_hypertension
+        description: |
+          Share of beneficiaries with hypertension, on a 0-1
+          fraction scale (CMS publishes an integer percent capped
+          at 75; divided by 100.0 here).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 0.75
+                inclusive: true
+      - name: pct_beneficiaries_hyperlipidemia
+        description: |
+          Share of beneficiaries with hyperlipidemia, on a 0-1
+          fraction scale (CMS publishes an integer percent capped
+          at 75; divided by 100.0 here).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 0.75
+                inclusive: true
+      - name: pct_beneficiaries_ischemic_heart_disease
+        description: |
+          Share of beneficiaries with ischemic heart disease, on a
+          0-1 fraction scale (CMS publishes an integer percent
+          capped at 75; divided by 100.0 here).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 0.75
+                inclusive: true
+      - name: pct_beneficiaries_heart_failure_nonihd
+        description: |
+          Share of beneficiaries with non-ischemic heart failure,
+          on a 0-1 fraction scale (CMS publishes an integer percent
+          capped at 75; divided by 100.0 here).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 0.75
+                inclusive: true
+      - name: pct_beneficiaries_copd
+        description: |
+          Share of beneficiaries with chronic obstructive pulmonary
+          disease, on a 0-1 fraction scale (CMS publishes an
+          integer percent capped at 75; divided by 100.0 here).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 0.75
+                inclusive: true
+      - name: pct_beneficiaries_chronic_kidney_disease
+        description: |
+          Share of beneficiaries with chronic kidney disease, on a
+          0-1 fraction scale (CMS publishes an integer percent
+          capped at 75; divided by 100.0 here).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 0.75
+                inclusive: true
+      - name: pct_beneficiaries_cancer6
+        description: |
+          Share of beneficiaries with any of the six CMS-tracked
+          cancers (breast, colorectal, endometrial, lung, prostate,
+          urologic), on a 0-1 fraction scale (CMS publishes an
+          integer percent capped at 75; divided by 100.0 here).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 0.75
+                inclusive: true
+      - name: pct_beneficiaries_alzheimers_dementia
+        description: |
+          Share of beneficiaries with Alzheimer's disease or
+          non-Alzheimer's dementia, on a 0-1 fraction scale (CMS
+          publishes an integer percent capped at 75; divided by
+          100.0 here).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 0.75
+                inclusive: true
+      - name: pct_beneficiaries_depression
+        description: |
+          Share of beneficiaries with depression, on a 0-1 fraction
+          scale (CMS publishes an integer percent capped at 75;
+          divided by 100.0 here).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 0.75
+                inclusive: true
+      - name: pct_beneficiaries_anxiety
+        description: |
+          Share of beneficiaries with anxiety disorders, on a 0-1
+          fraction scale (CMS publishes an integer percent capped
+          at 75; divided by 100.0 here).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 0.75
+                inclusive: true
+      - name: pct_beneficiaries_alcohol_drug_use
+        description: |
+          Share of beneficiaries with alcohol or drug use disorders,
+          on a 0-1 fraction scale (CMS publishes an integer percent
+          capped at 75; divided by 100.0 here).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 0.75
+                inclusive: true
+      - name: medicare_payment_per_service
+        description: |
+          `total_medicare_payment_amount / total_services`. Reflects
+          the provider's service mix and geography — use
+          `total_medicare_standardized_amount` for
+          geography-adjusted comparisons.
+      - name: medicare_payment_per_beneficiary
+        description: |
+          `total_medicare_payment_amount / total_beneficiaries` —
+          average Part B spend per beneficiary the provider
+          rendered services to.
+      - name: services_per_beneficiary
+        description: |
+          `total_services / total_beneficiaries` — average number
+          of services per beneficiary treated.
+      - name: as_of
+        description: |
+          Snapshot vintage: the upstream `modified` date CMS
+          reported for the physician file at capture time (from
+          `stg_cms__dataset_vintages`). Constant across rows.
+        data_tests:
+          - not_null
+
   - name: fct_part_b_drug_spending
     description: |
       Medicare Part B drug spending, unpivoted from the wide-by-year
