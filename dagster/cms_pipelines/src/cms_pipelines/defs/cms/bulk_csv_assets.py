@@ -7,10 +7,19 @@ datastore-pagination path (one JSON GET per 1,000 rows) is impractical:
 the Physician-by-Provider-and-Service file alone is ~10M rows.
 
 This module sidesteps that. Each ``dkan_data_api_bulk`` row in
-``datasets.toml`` becomes an asset that hands the dataset's annual CSV
-``downloadURL`` straight to DuckDB's ``read_csv_auto`` and writes Parquet
-via ``COPY ... TO ... (FORMAT PARQUET)``. The CSV is never materialized
-in Python memory, just streamed through DuckDB's vectorized engine.
+``datasets.toml`` becomes an asset that resolves the dataset's annual
+CSV ``downloadURL``, downloads it to a temp file next to the asset's
+staging directory, then hands the local path to DuckDB
+(``read_csv`` + ``write_parquet``).
+
+Why download first instead of streaming through DuckDB httpfs: some CMS
+CSVs (notably the 8.4 GB Open Payments general-payments file on
+``download.cms.gov``, served by Akamai NetStorage) come back with no
+``Content-Length`` and no ``Accept-Ranges`` header, so DuckDB httpfs
+cannot do range reads and buffers the entire body — GitHub Actions
+runners OOM and the job dies. Streaming the download in chunks over
+``httpx`` keeps memory flat regardless of file size; the local convert
+is then a plain vectorized DuckDB scan.
 
 We bypass the Parquet IO manager because returning a ``pyarrow.Table``
 would defeat the streaming win — but we reuse its on-disk layout and
@@ -21,6 +30,7 @@ publish helpers (stage to a temp name, atomically promote to
 
 from collections.abc import Callable
 from pathlib import Path
+import uuid
 
 from cms_api import (
     MEDICAID_BASE_URL,
@@ -31,6 +41,7 @@ from cms_api import (
     load_registry,
 )
 import duckdb
+import httpx
 
 from cms_pipelines.defs.cms.vintage_sidecar import capture_dataset_vintage
 from cms_pipelines.defs.io_managers.parquet import publish_parquet, staged_write
@@ -39,6 +50,16 @@ from dagster import AssetExecutionContext, AssetsDefinition, MaterializeResult, 
 
 
 _ASSET_PREFIX = "cms_"
+
+# 512 KiB per chunk keeps download throughput close to line rate without
+# pinning much memory; the multi-GB CMS files spend seconds to minutes
+# in this loop and never hold more than one chunk at a time.
+_DOWNLOAD_CHUNK_BYTES = 512 * 1024
+
+# Generous read timeout: the biggest CMS bulk CSVs are multi-GB served
+# from download.cms.gov and can idle briefly between chunks on slower
+# runners. The default 5s read timeout is way too aggressive.
+_DOWNLOAD_TIMEOUT = httpx.Timeout(30.0, read=600.0)
 
 
 def _resolve_data_api_csv_url(spec: DatasetSpec) -> str:
@@ -72,22 +93,57 @@ _RESOLVERS: dict[str, Callable[[DatasetSpec], str]] = {
 }
 
 
+def _stream_download(*, csv_url: str, dest: Path) -> None:
+    """Stream ``csv_url`` to ``dest`` in fixed-size chunks over HTTPS.
+
+    Chunks are written straight to disk so the response body is never
+    materialized in Python memory — required because CMS bulk files
+    range from hundreds of MB to ~8 GB. Redirects are followed because
+    ``download.cms.gov`` sometimes 302s through Akamai.
+    """
+    with (
+        dest.open("wb") as fh,
+        httpx.stream(
+            "GET",
+            csv_url,
+            follow_redirects=True,
+            timeout=_DOWNLOAD_TIMEOUT,
+        ) as response,
+    ):
+        response.raise_for_status()
+        for chunk in response.iter_bytes(chunk_size=_DOWNLOAD_CHUNK_BYTES):
+            fh.write(chunk)
+
+
 def _run_bulk_load(*, csv_url: str, out_path: Path) -> int:
-    """Stream ``csv_url`` to ``out_path`` via DuckDB; return rows written.
+    """Download ``csv_url`` to a local temp file, then convert to Parquet.
 
     Uses DuckDB's Python relation API (``read_csv`` + ``write_parquet``)
     rather than ``COPY ... TO ?`` — the latter rejects parameter binding
-    for its destination path. ``read_csv`` accepts HTTPS URLs directly
-    (DuckDB has built-in httpfs), so the CMS CSVs stream through without
-    ever materializing in Python memory. The row-count is read back from
-    the landed Parquet so a header-only CSV trips the same guard as a
-    zero-byte CSV would.
+    for its destination path. The CSV is downloaded first (see module
+    docstring for why we don't hand the URL to DuckDB httpfs) into a
+    hidden sibling of ``out_path`` and removed in a ``finally`` block
+    so a failed convert never leaks a large temp file.
+
+    ``sample_size=-1`` forces DuckDB to scan the entire CSV during type
+    sniffing. The default 20 000-row sample misdetects columns whose
+    type flips deep in a multi-GB file — the Open Payments general file
+    has ~150 000 numeric US ZIPs before the first alphanumeric UK
+    postcode, which makes the default sniff pick ``BIGINT`` and then
+    fail mid-conversion. A full-file sniff is cheap now that the CSV is
+    local. The row-count is read back from the landed Parquet so a
+    header-only CSV trips the same guard as a zero-byte CSV would.
     """
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with duckdb.connect(":memory:") as con:
-        relation = con.read_csv(csv_url, header=True)
-        relation.write_parquet(str(out_path))
-        row = con.execute("SELECT COUNT(*) FROM read_parquet(?)", [str(out_path)]).fetchone()
+    local_csv = out_path.parent / f".{uuid.uuid4().hex}.csv.download"
+    try:
+        _stream_download(csv_url=csv_url, dest=local_csv)
+        with duckdb.connect(":memory:") as con:
+            relation = con.read_csv(str(local_csv), header=True, sample_size=-1)
+            relation.write_parquet(str(out_path))
+            row = con.execute("SELECT COUNT(*) FROM read_parquet(?)", [str(out_path)]).fetchone()
+    finally:
+        local_csv.unlink(missing_ok=True)
     if row is None:
         msg = f"DuckDB returned no count row for {out_path}"
         raise RuntimeError(msg)
