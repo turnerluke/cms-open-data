@@ -60,15 +60,18 @@ for row in iter_dataset("abcd-efgh", domain=MEDICAID_DOMAIN, where="state = 'CA'
 
 All defaults can be overridden via environment variables:
 
-| Variable                        | Default | Purpose                                                    |
-| ------------------------------- | ------- | ---------------------------------------------------------- |
-| `CMS_API_SOCRATA_APP_TOKEN`     | unset   | Socrata app token for `data.cms.gov` / `data.medicaid.gov` |
-| `CMS_API_TIMEOUT`               | `30`    | HTTP request timeout (seconds)                             |
-| `CMS_API_RETRY_MAX_ATTEMPTS`    | `5`     | Total tries (including the first) for retryable errors     |
-| `CMS_API_RETRY_WAIT_MULTIPLIER` | `0.5`   | Exponential-backoff multiplier (seconds)                   |
+| Variable                        | Default | Purpose                                                           |
+| ------------------------------- | ------- | ----------------------------------------------------------------- |
+| `CMS_API_SOCRATA_APP_TOKEN`     | unset   | Socrata app token for `data.cms.gov` / `data.medicaid.gov`        |
+| `CMS_API_TIMEOUT`               | `30`    | HTTP request timeout (seconds)                                    |
+| `CMS_API_RETRY_MAX_ATTEMPTS`    | `5`     | Total tries (including the first) for retryable errors            |
+| `CMS_API_RETRY_WAIT_MULTIPLIER` | `0.5`   | Exponential-backoff multiplier (seconds)                          |
+| `CMS_API_RETRY_WAIT_MAX`        | `8`     | Cap on any single retry sleep (seconds); clamps `Retry-After` too |
 
 Retries fire on transport errors and HTTP 429 / 5xx; client-side 4xx surface
-immediately.
+immediately. When a 429 response carries an integer-seconds `Retry-After`
+header the retry loop sleeps for that duration (clamped to
+`CMS_API_RETRY_WAIT_MAX`) instead of following the exponential schedule.
 
 ## Adding a new endpoint
 

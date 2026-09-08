@@ -5,6 +5,16 @@ All public clients in this package go through `request_json`, which wraps an
 errors, HTTP 429, HTTP 5xx) are retried with exponential backoff; everything
 else surfaces immediately so callers don't silently swallow bad requests.
 
+When a 429 response carries an integer-seconds ``Retry-After`` header the
+retry loop honours it (clamped to the wait cap) instead of using the
+exponential schedule — CMS's data.cms.gov endpoints emit ``Retry-After`` when
+the per-IP rate-limit window is active, and sleeping for the server-suggested
+duration is the only way to survive it on shared egress IPs (e.g.
+GitHub-hosted runners) where multiple concurrent clients keep the budget
+drained. HTTP-date form ``Retry-After`` values are treated as absent — CMS
+uses the integer form and parsing calendar dates from a rate-limiter header
+is not worth the surface area.
+
 Defaults are tunable via environment variables so pipelines can adjust
 behaviour without code changes:
 
@@ -13,6 +23,9 @@ behaviour without code changes:
   (default ``5``).
 - ``CMS_API_RETRY_WAIT_MULTIPLIER`` — exponential-backoff multiplier in
   seconds (default ``0.5``); the test suite sets this to ``0`` for speed.
+- ``CMS_API_RETRY_WAIT_MAX`` — cap on any single retry sleep in seconds
+  (default ``8``). Also caps ``Retry-After`` values so a hostile or
+  bugged server can't stall the pipeline indefinitely.
 """
 
 from __future__ import annotations
@@ -21,13 +34,15 @@ import os
 from typing import TYPE_CHECKING
 
 import httpx
-from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
+from tenacity import RetryCallState, retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from ._types import JsonValue
+
+    WaitCallable = Callable[[RetryCallState], float]
 
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
@@ -77,6 +92,47 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _parse_retry_after_seconds(response: httpx.Response) -> float | None:
+    """Return the ``Retry-After`` header as seconds, or ``None`` if absent/unparseable.
+
+    Only the integer-seconds form of RFC 9110 is honoured. HTTP-date values
+    are treated as absent — CMS emits the integer form and this keeps the
+    parser tiny.
+    """
+    raw = response.headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        seconds = float(raw.strip())
+    except ValueError:
+        return None
+    if seconds < 0:
+        return None
+    return seconds
+
+
+def _make_wait(multiplier: float, wait_max: float) -> WaitCallable:
+    """Build the tenacity wait callable used by ``request_json``.
+
+    Falls back to exponential backoff for every retry case except a 429
+    that carries a parseable integer-seconds ``Retry-After``, in which case
+    the header value (clamped to ``wait_max``) is returned instead.
+    """
+    exponential = wait_exponential(multiplier=multiplier, min=0, max=wait_max)
+
+    def _wait(retry_state: RetryCallState) -> float:
+        outcome = retry_state.outcome
+        if outcome is not None and outcome.failed:
+            exc = outcome.exception()
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == _HTTP_TOO_MANY_REQUESTS:
+                retry_after = _parse_retry_after_seconds(exc.response)
+                if retry_after is not None:
+                    return min(retry_after, wait_max)
+        return exponential(retry_state)
+
+    return _wait
+
+
 def build_client(
     *,
     base_url: str,
@@ -106,17 +162,20 @@ def request_json(
     """Issue an HTTP request and return parsed JSON.
 
     Retries on transport errors and HTTP 429/5xx with exponential backoff;
-    everything else (4xx, JSON-decode errors) raises immediately. The retry
-    knobs are read from the environment on every call so tests can dial them
-    down via ``monkeypatch.setenv`` without re-importing the module.
+    429 responses with an integer ``Retry-After`` header sleep for that
+    interval (clamped to the wait cap) instead. Everything else (4xx,
+    JSON-decode errors) raises immediately. The retry knobs are read from
+    the environment on every call so tests can dial them down via
+    ``monkeypatch.setenv`` without re-importing the module.
     """
     max_attempts = _env_int("CMS_API_RETRY_MAX_ATTEMPTS", DEFAULT_RETRY_MAX_ATTEMPTS)
     wait_multiplier = _env_float("CMS_API_RETRY_WAIT_MULTIPLIER", DEFAULT_RETRY_WAIT_MULTIPLIER)
+    wait_max = _env_float("CMS_API_RETRY_WAIT_MAX", DEFAULT_RETRY_WAIT_MAX)
 
     @retry(
         retry=retry_if_exception(_is_transient),
         stop=stop_after_attempt(max_attempts),
-        wait=wait_exponential(multiplier=wait_multiplier, min=0, max=DEFAULT_RETRY_WAIT_MAX),
+        wait=_make_wait(wait_multiplier, wait_max),
         reraise=True,
     )
     def _do() -> JsonValue:

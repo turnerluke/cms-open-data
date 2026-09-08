@@ -109,7 +109,16 @@ jobs:
       # its sidecar files are written as a side effect of every
       # extraction asset. Registry assets with no staging model (e.g.
       # the multi-GB NPPES extract) are deliberately not selected.
+      # GitHub-hosted runners share egress IPs with the rest of the
+      # world, so data.cms.gov's per-IP rate limit is partly consumed
+      # by strangers and 429s can outlast the local default backoff
+      # (which caps at ~8s total). Bump retry attempts + wait cap for
+      # this one step so the shared budget is waited out, not raced
+      # against; the module also honours ``Retry-After`` when present.
       - name: Materialize raw extraction assets
+        env:
+          CMS_API_RETRY_MAX_ATTEMPTS: "8"
+          CMS_API_RETRY_WAIT_MAX: "90"
         run: >
           uv run --package cms-pipelines dagster asset materialize
           -m cms_pipelines.definitions
