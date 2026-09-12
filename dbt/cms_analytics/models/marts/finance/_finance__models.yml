@@ -1333,3 +1333,285 @@ models:
             expression: "date_of_payment >= date '2014-01-01'"
           config:
             where: "date_of_payment is not null"
+
+  - name: fct_qhp_premiums
+    description: |
+      Monthly premium quotes for every certified Qualified Health Plan
+      (QHP) on the federally-facilitated marketplace, unpivoted from
+      the 37 wide premium-scenario columns of the four
+      `stg_cms__qhp_landscape_*_2026` staging models (individual + SHOP
+      × medical + dental). Grain:
+      (`plan_id`, `fips_county_code`, `scenario`) — 5,360,870 rows in
+      the PY2026 vintage.
+
+      Modeling choices to be aware of:
+
+      - The 37 CMS-published sample scenarios are decomposed into
+        `family_structure` (nine values: `child`, `individual`,
+        `couple`, `couple_plus_1_child`, `couple_plus_2_children`,
+        `couple_plus_3_or_more_children`, `individual_plus_1_child`,
+        `individual_plus_2_children`, `individual_plus_3_or_more_children`)
+        and `primary_age` (SMALLINT: `14`, `18`, `21`, `27`, `30`,
+        `40`, `50`, `60`). The full label is kept as `scenario` so
+        Evidence can bucket on a single column when it needs the
+        original grain. See the column docs for the age-14 encoding
+        of CMS's `Premium Child Age 0-14` band.
+      - `market`, `product`, `plan_year`, `metal_level`, and
+        `rating_area` are denormalized from the four source files
+        onto every row so Evidence can filter without joining
+        `dim_qhp_plan` / `dim_county`. `metal_level` matches the
+        value stored on `dim_qhp_plan` (verified constant per
+        `plan_id` when this fact was built), so the two never
+        disagree in this vintage; a future vintage that mutates
+        `metal_level` per county would surface as a
+        `dim_qhp_plan.metal_level` collapse warning first.
+      - Rows where the source premium cell is `NULL` are **dropped**:
+        232,050 of 5,592,920 unpivoted rows (~4.1%). Every dropped
+        row is one of the 6,630 individual-dental plans flagged
+        `Allows Child-Only` in staging, where CMS publishes only the
+        two child scenarios (`premium_child_age_0_14`,
+        `premium_child_age_18`) and leaves the 35 adult / family
+        cells blank — a real product-scope gap, not missing data.
+        Zero-dollar premiums do not exist in the PY2026 vintage on
+        any of the four files, so no `!= 0` filter is applied; a
+        future legitimate `$0` scenario would land here rather than
+        being silently discarded.
+      - Scenario coverage per plan × county: 144,530 pairs carry all
+        37 scenarios and 6,630 pairs (the child-only dental plans
+        above) carry exactly 2. No pair carries more than 37 —
+        enforced by the grain uniqueness test on
+        (`plan_id`, `fips_county_code`, `scenario`).
+      - FK relationships to `dim_qhp_plan` and `dim_county` are held
+        at **error** severity: both dimensions are populated from
+        the same four QHP files, so the FK is 0 orphans by
+        construction on every vintage. If a future refresh drops
+        rows in either dim but not the other, the test fails loudly
+        rather than silently under-counting.
+
+      Sanity signals verified on the PY2026 build:
+
+      - Age monotonicity within `product = 'medical'`: 0 violations
+        of `age-60 >= age-21` (100,083 medical plan × county pairs)
+        and 0 of `age-50 >= age-21`. Dental has 443 pairs where
+        age-60 < age-21 and 673 where age-50 < age-21 out of 44,447
+        dental pairs (~1%) — dental issuers commonly price flat or
+        with a dip in mid-adult years, so this is real pricing
+        design, not a data defect.
+      - Couple >= individual at the same age: 0 violations across
+        100,083 medical and 44,447 dental pairs at both age 21 and
+        age 60.
+      - Premium ranges: medical spans $166.17–$14,006.58 (individual
+        scenarios $166–$6,479; the max is a
+        `couple_plus_3_or_more_children_age_50` family scenario);
+        dental spans $6.50–$316.17 (individual scenarios
+        $6.50–$79.00; the max is a family dental scenario).
+    columns:
+      - name: plan_id
+        description: |
+          14-character HIOS Standard Component ID identifying the
+          plan. Foreign key to `dim_qhp_plan`. Held at **error**
+          severity — this fact and `dim_qhp_plan` are built from the
+          same four QHP staging models, so 0 orphans by construction.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_qhp_plan')
+                field: plan_id
+      - name: fips_county_code
+        description: |
+          Five-digit FIPS county code (leading-zero preserving text)
+          identifying the county the premium quote applies to.
+          Foreign key to `dim_county`. Held at **error** severity —
+          same construction argument as `plan_id`.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_county')
+                field: fips_county_code
+      - name: plan_year
+        description: |
+          Calendar plan year the premium applies to — `2026` for
+          every row in this vintage.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [2026]
+      - name: market
+        description: |
+          `individual` (5,244,505 rows) or `shop` (116,365 rows).
+          Denormalized from the source file each row came from.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - individual
+                  - shop
+      - name: product
+        description: |
+          `medical` (3,703,071 rows) or `dental` (1,657,799 rows).
+          Denormalized from the source file each row came from.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - medical
+                  - dental
+      - name: metal_level
+        description: |
+          Medical metal tier (`Bronze`, `Expanded Bronze`, `Silver`,
+          `Gold`, `Platinum`, `Catastrophic`) or stand-alone-dental
+          tier (`High`, `Low`). Denormalized from the plan-file's
+          metal-level column — matches `dim_qhp_plan.metal_level`
+          exactly in this vintage (verified constant per `plan_id`
+          when `dim_qhp_plan` was built). Kept on the fact so
+          Evidence can filter by tier without joining the plan dim.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Bronze
+                  - Expanded Bronze
+                  - Silver
+                  - Gold
+                  - Platinum
+                  - Catastrophic
+                  - High
+                  - Low
+      - name: rating_area
+        description: |
+          CMS rating-area identifier (e.g. `Rating Area 1`) —
+          county-varying, so it lives on the fact rather than
+          `dim_qhp_plan`. Governs the ACA rate-setting geography
+          the premium quote was priced against.
+      - name: scenario
+        description: |
+          Full CMS scenario label, one of 37 values from
+          `child_age_0_14` through
+          `individual_plus_3_or_more_children_age_50`. Kept as a
+          single column so Evidence can group by scenario without
+          re-concatenating `family_structure` and `primary_age`.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - child_age_0_14
+                  - child_age_18
+                  - individual_age_21
+                  - individual_age_27
+                  - individual_age_30
+                  - individual_age_40
+                  - individual_age_50
+                  - individual_age_60
+                  - couple_age_21
+                  - couple_age_30
+                  - couple_age_40
+                  - couple_age_50
+                  - couple_age_60
+                  - couple_plus_1_child_age_21
+                  - couple_plus_1_child_age_30
+                  - couple_plus_1_child_age_40
+                  - couple_plus_1_child_age_50
+                  - couple_plus_2_children_age_21
+                  - couple_plus_2_children_age_30
+                  - couple_plus_2_children_age_40
+                  - couple_plus_2_children_age_50
+                  - couple_plus_3_or_more_children_age_21
+                  - couple_plus_3_or_more_children_age_30
+                  - couple_plus_3_or_more_children_age_40
+                  - couple_plus_3_or_more_children_age_50
+                  - individual_plus_1_child_age_21
+                  - individual_plus_1_child_age_30
+                  - individual_plus_1_child_age_40
+                  - individual_plus_1_child_age_50
+                  - individual_plus_2_children_age_21
+                  - individual_plus_2_children_age_30
+                  - individual_plus_2_children_age_40
+                  - individual_plus_2_children_age_50
+                  - individual_plus_3_or_more_children_age_21
+                  - individual_plus_3_or_more_children_age_30
+                  - individual_plus_3_or_more_children_age_40
+                  - individual_plus_3_or_more_children_age_50
+      - name: family_structure
+        description: |
+          The sample household the premium quote covers, decomposed
+          from `scenario`. `child` covers a child-only premium at
+          the age given by `primary_age`; `individual` and `couple`
+          cover adults with no children; the `*_plus_N_child(ren)`
+          variants cover an adult (or a couple) plus 1, 2, or 3+
+          children where the adult(s) are aged `primary_age`.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - child
+                  - individual
+                  - couple
+                  - couple_plus_1_child
+                  - couple_plus_2_children
+                  - couple_plus_3_or_more_children
+                  - individual_plus_1_child
+                  - individual_plus_2_children
+                  - individual_plus_3_or_more_children
+      - name: primary_age
+        description: |
+          Age of the primary insured in the sample scenario, in
+          years. CMS publishes eight ages: `14`, `18`, `21`, `27`,
+          `30`, `40`, `50`, `60`. For the `child_age_0_14` scenario
+          (a single flat rate covering ages 0-14) we encode
+          `primary_age = 14` — the top of the CMS age band, chosen
+          to keep the column a tidy `SMALLINT` scalar; the
+          `is_child_only_scenario` flag lets consumers who care
+          about the band representation filter it out.
+          `age_27` appears only on the `individual` scenarios in
+          the CMS layout, and `age_60` only on `individual` and
+          `couple` scenarios — the family scenarios stop at age 50.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [14, 18, 21, 27, 30, 40, 50, 60]
+                quote: false
+      - name: is_child_only_scenario
+        description: |
+          `TRUE` when `family_structure = 'child'` (i.e. the two
+          `child_age_*` scenarios). Kept as a separate boolean so
+          Evidence can toggle child-only premiums in / out of an
+          age-curve chart without regexing `scenario`.
+        data_tests:
+          - not_null
+      - name: monthly_premium
+        description: |
+          Monthly premium for the scenario, in US dollars,
+          `decimal(12, 2)`. Never `NULL` in this fact — rows with
+          a `NULL` source cell are dropped upstream. Zero-dollar
+          premiums do not exist in the PY2026 vintage.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: false
+      - name: as_of
+        description: |
+          Snapshot vintage: `max(modified)` across the four QHP
+          dataset keys in `stg_cms__dataset_vintages` — the same
+          expression `dim_qhp_plan.as_of` and `dim_county.as_of`
+          use, so a plan × county join carries one consistent
+          `as_of`. Constant across rows.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - plan_id
+              - fips_county_code
+              - scenario
