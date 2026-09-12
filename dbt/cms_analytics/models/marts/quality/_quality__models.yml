@@ -958,3 +958,377 @@ models:
             expression: |
               (measure_code = 'SUMMARY_STAR_RATING')
               or (star_rating is null)
+
+  - name: fct_hospital_readmissions
+    description: |
+      Hospital Readmissions Reduction Program (HRRP) results, one row
+      per (`ccn`, `condition`). Grain: (`ccn`, `condition`) — 18,330
+      rows in the current vintage (3,055 hospitals × 6 conditions:
+      `AMI`, `CABG`, `COPD`, `HF`, `HIP-KNEE`, `PN`). The `condition`
+      slug is derived from the source `measure_name` by stripping the
+      `READM-30-` prefix and `-HRRP` suffix. Every row shares the same
+      measurement window (2021-07-01 → 2024-06-30) — HRRP publishes
+      once a year over a three-year rolling period.
+
+      Modeling choices to be aware of:
+
+      - Rows whose `excess_readmission_ratio` is `NULL` (`'N/A'`
+        upstream — ineligible / suppressed for that hospital +
+        condition, 6,610 rows / 36%) are **kept**, so condition
+        coverage per hospital stays analyzable — count non-null ERR
+        values to measure participation. The three risk-adjusted
+        result columns (ERR, predicted rate, expected rate) always
+        null out together.
+      - `is_too_few_to_report` distinguishes CMS's small-count
+        readmission suppression (3,683 rows) from the generic `'N/A'`
+        ineligible state. When the flag is `true`,
+        `number_of_readmissions` is `NULL` but the ERR / predicted /
+        expected columns may still be populated.
+      - `is_penalized` is derived: `excess_readmission_ratio > 1`,
+        `NULL` when ERR is `NULL`. The HRRP payment adjustment is
+        applied when a hospital's risk-adjusted readmissions exceed
+        the model expectation. Observed: 5,643 of 11,720 non-null ERR
+        rows (48%) qualify.
+      - Hospital name/address attributes are not inlined; join
+        `dim_hospital` on `ccn` for them.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number of the hospital. Foreign key to
+          `dim_hospital`, enforced at **warn** severity — the HRRP
+          snapshot in the current vintage (2026-01-26) is six months
+          older than the `hospital_general_information` snapshot
+          (2026-07-22), so 20 CCNs / 120 rows here (~0.7%) reference
+          hospitals that have since closed, recertified, or otherwise
+          left the Care Compare universe. This is a structural
+          consequence of HRRP's annual publication cadence versus
+          Care Compare's quarterly refresh, so orphans are the
+          expected steady state and a **warn** rather than an error.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_hospital')
+                field: ccn
+              config:
+                # HRRP is published annually; Care Compare's provider
+                # file refreshes quarterly. Orphans track that cadence
+                # gap (closed / recertified hospitals) — see column
+                # description. Warn rather than error is the intended
+                # steady state.
+                severity: warn
+      - name: condition
+        description: |
+          Clinical condition the readmission measure covers, derived
+          from the source `measure_name` by stripping `READM-30-`
+          and `-HRRP`. Six values: `AMI` (acute myocardial
+          infarction), `CABG` (coronary artery bypass graft), `COPD`
+          (chronic obstructive pulmonary disease), `HF` (heart
+          failure), `HIP-KNEE` (elective hip/knee arthroplasty),
+          `PN` (pneumonia).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - AMI
+                  - CABG
+                  - COPD
+                  - HF
+                  - HIP-KNEE
+                  - PN
+      - name: excess_readmission_ratio
+        description: |
+          Ratio of predicted-to-expected 30-day readmissions
+          (`> 1` means worse than the model expected). `NULL` on
+          the 6,610 rows CMS flags as `'N/A'` (ineligible /
+          suppressed); observed range 0.4698–1.6297 in this
+          vintage. No upper bound is enforced — the ratio has no
+          theoretical cap.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: predicted_readmission_rate
+        description: |
+          Model-predicted 30-day readmission rate (percent).
+          `NULL` on the same 6,610 rows as `excess_readmission_ratio`.
+      - name: expected_readmission_rate
+        description: |
+          Model-expected 30-day readmission rate (percent).
+          `NULL` on the same 6,610 rows as `excess_readmission_ratio`.
+      - name: number_of_discharges
+        description: |
+          Eligible discharges in the measurement window; `NULL`
+          on 10,088 rows (~55%) where CMS reported `'N/A'`
+          upstream. Pair with `footnote` when interpreting the
+          null.
+      - name: number_of_readmissions
+        description: |
+          30-day readmissions in the measurement window. `NULL`
+          for two distinct upstream reasons: the generic `'N/A'`
+          ineligible / suppressed state (6,610 rows) and CMS's
+          small-count `'Too Few to Report'` sentinel (3,683 rows) —
+          the latter surfaces as `is_too_few_to_report = true`.
+      - name: is_too_few_to_report
+        description: |
+          `true` when the raw readmission count was CMS's small-count
+          suppression sentinel (`'Too Few to Report'`), distinct
+          from the generic ineligible / suppressed state. Preserved
+          so marts can separate "hospital had eligible discharges
+          but too few readmissions to publish" from "hospital had no
+          eligible measure at all".
+        data_tests:
+          - not_null
+      - name: is_penalized
+        description: |
+          Derived flag: `excess_readmission_ratio > 1`, i.e. the
+          hospital's risk-adjusted readmissions exceeded the model
+          expectation and the measure triggers an HRRP payment
+          penalty for that condition. `NULL` on rows where ERR is
+          `NULL` (ineligible / suppressed). Observed in this
+          vintage: 5,643 of 11,720 non-null ERR rows (48%) are
+          penalized.
+      - name: footnote
+        description: |
+          CMS suppression footnote code explaining why numeric
+          results are missing (values `'1'`, `'5'`, `'7'`, `'29'`
+          in this vintage); `NULL` when no footnote applies.
+      - name: period_start_date
+        description: |
+          First day of the measurement window. Constant
+          `2021-07-01` in this vintage — HRRP publishes one
+          three-year rolling window annually.
+        data_tests:
+          - not_null
+      - name: period_end_date
+        description: |
+          Last day of the measurement window. Constant
+          `2024-06-30` in this vintage.
+        data_tests:
+          - not_null
+      - name: as_of
+        description: |
+          Snapshot vintage of the source dataset: the upstream
+          `modified` date CMS reported for
+          `hospital_readmissions_reduction` (from
+          `stg_cms__dataset_vintages`).
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ccn
+              - condition
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "period_start_date <= period_end_date"
+      # Guard: `is_penalized` is a pure function of ERR and must
+      # follow it — non-null iff ERR is non-null, and true iff
+      # ERR > 1.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (excess_readmission_ratio is null and is_penalized is null)
+              or (
+                excess_readmission_ratio is not null
+                and is_penalized = (excess_readmission_ratio > 1)
+              )
+
+  - name: fct_hospital_vbp
+    description: |
+      Hospital Value-Based Purchasing (VBP) Program — Total
+      Performance Score plus the four domain scores. Grain: `ccn` —
+      one row per Medicare-participating hospital, 2,455 rows in the
+      current vintage (FY2026). Covers 49 states plus `DC`; Maryland
+      is absent because its hospitals are exempt from VBP under the
+      state's all-payer model.
+
+      Modeling choices to be aware of:
+
+      - Each of the four VBP domains (clinical outcomes; person &
+        community engagement; safety; efficiency & cost reduction)
+        ships both an unweighted (0–100) and a weighted (share of the
+        100-point total) score. Domain scores carry `NULL`s from
+        staging's `try_cast` of CMS's `'Not Available'` sentinels
+        (roughly 68 / 32 / 55 / 1 rows in the four domains); the
+        `total_performance_score` is fully numeric in this vintage.
+      - Rows with any `NULL` weighted domain score (156 of 2,455 in
+        this vintage) are **kept** — when a hospital doesn't meet a
+        domain's minimum measure count, CMS reweights the remaining
+        domains before computing the total, so the arithmetic
+        weighted-sum equality only holds on the fully-scored rows.
+      - On the 2,299 rows where all four weighted domain scores are
+        non-null, their arithmetic sum matches
+        `total_performance_score` to within `1e-12` in this vintage
+        (a floating-point residual). The plausibility test uses a
+        `1e-6` tolerance for headroom against future rounding
+        changes.
+      - Hospital name/address attributes are not inlined; join
+        `dim_hospital` on `ccn` for them.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number of the hospital. Primary key —
+          one row per hospital. Foreign key to `dim_hospital`,
+          enforced at **warn** severity — the VBP snapshot in the
+          current vintage (2026-01-26) is six months older than the
+          `hospital_general_information` snapshot (2026-07-22), so
+          9 CCNs (~0.4%) reference hospitals that have since closed
+          or recertified. Same annual-vs-quarterly cadence gap as
+          `fct_hospital_readmissions`, so orphans are the expected
+          steady state and a **warn** rather than an error.
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('dim_hospital')
+                field: ccn
+              config:
+                # VBP is published annually; Care Compare's provider
+                # file refreshes quarterly. Orphans track that cadence
+                # gap — see column description. Warn rather than error
+                # is the intended steady state.
+                severity: warn
+      - name: fiscal_year
+        description: |
+          Federal fiscal year the VBP payment adjustment applies to.
+          Constant `'2026'` in this vintage.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - "2026"
+      - name: unweighted_clinical_outcomes_score
+        description: |
+          Clinical Outcomes domain unweighted score (0–100). `NULL`
+          on rows CMS reports as `'Not Available'` (68 rows —
+          hospitals lacking enough measure data in this domain).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: weighted_clinical_outcomes_score
+        description: |
+          Clinical Outcomes domain weighted contribution to the
+          100-point total. `NULL` on the same rows as the unweighted
+          twin.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: unweighted_person_and_community_engagement_score
+        description: |
+          Person & Community Engagement domain unweighted score
+          (0–100). `NULL` on 32 rows CMS reports as `'Not
+          Available'`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: weighted_person_and_community_engagement_score
+        description: |
+          Person & Community Engagement domain weighted contribution
+          to the 100-point total. `NULL` on the same rows as the
+          unweighted twin.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: unweighted_safety_score
+        description: |
+          Safety domain unweighted score (0–100). `NULL` on 55 rows
+          CMS reports as `'Not Available'`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: weighted_safety_score
+        description: |
+          Safety domain weighted contribution to the 100-point
+          total. `NULL` on the same rows as the unweighted twin.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: unweighted_efficiency_and_cost_reduction_score
+        description: |
+          Efficiency & Cost Reduction domain unweighted score
+          (0–100). `NULL` on 1 row CMS reports as `'Not Available'`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: weighted_efficiency_and_cost_reduction_score
+        description: |
+          Efficiency & Cost Reduction domain weighted contribution
+          to the 100-point total. `NULL` on the same row as the
+          unweighted twin.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: total_performance_score
+        description: |
+          Overall VBP total performance score (0–100). The weighted
+          sum of the four domain scores; on rows with all four
+          weighted domain scores non-null, the sum matches this
+          value to within `1e-12` in the current vintage. Fully
+          numeric in this vintage (no `'Not Available'` sentinels),
+          so `not_null` is enforced.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: as_of
+        description: |
+          Snapshot vintage of the source dataset: the upstream
+          `modified` date CMS reported for
+          `hospital_value_based_purchasing_total` (from
+          `stg_cms__dataset_vintages`).
+        data_tests:
+          - not_null
+    data_tests:
+      # Plausibility: on rows with all four weighted domain scores
+      # non-null, their sum should approximate the total performance
+      # score. Observed max deviation in the current vintage is
+      # ~1e-12 (floating-point residual across 2,299 rows); tolerance
+      # is set at 1e-6 for headroom against future rounding changes.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              weighted_clinical_outcomes_score is null
+              or weighted_person_and_community_engagement_score is null
+              or weighted_safety_score is null
+              or weighted_efficiency_and_cost_reduction_score is null
+              or abs(
+                (
+                  weighted_clinical_outcomes_score
+                  + weighted_person_and_community_engagement_score
+                  + weighted_safety_score
+                  + weighted_efficiency_and_cost_reduction_score
+                ) - total_performance_score
+              ) < 1e-6
