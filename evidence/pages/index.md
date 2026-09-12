@@ -11,8 +11,10 @@ with dbt on DuckDB from CMS public datasets.
 
 - [Drug spending](/drug-spending) — top drugs, multi-year trends, and a
   Part B vs Part D comparison for drugs billed in both programs.
-- [Hospital quality](/hospital-quality) — overall star ratings and
-  healthcare-associated infection performance.
+- [Hospital quality](/hospital-quality) — overall star ratings,
+  healthcare-associated infection performance, HRRP excess
+  readmission ratios by condition and state, and VBP total
+  performance scores with domain decomposition.
 - [Cost vs quality](/cost-vs-quality) — Medicare inpatient payment per
   discharge by star rating, with case mix as the confounder.
 - [Prescribers](/prescribers) — who drives spending on the top Part D
@@ -56,6 +58,18 @@ select
     count(*),
     cast(count(distinct measure_id) as varchar) || ' measures'
 from cms.hospital_quality
+union all
+select
+    'fct_hospital_readmissions',
+    rows_total,
+    cast(conditions as varchar) || ' conditions'
+from cms.hospital_readmissions_overview
+union all
+select
+    'fct_hospital_vbp',
+    hospitals,
+    'FY' || cast(fiscal_year as varchar)
+from cms.hospital_vbp_overview
 union all
 select
     'fct_hospital_utilization',
