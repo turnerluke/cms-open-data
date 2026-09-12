@@ -1,15 +1,15 @@
 """Materialization tests for the QHP Landscape ZIP-XLSX assets.
 
-The download step is monkey-patched to copy a fixture ZIP into the asset's
-temp dir, so the rest of the pipeline — extract, ``read_xlsx``, write
-Parquet — runs end-to-end against a real (tiny) XLSX without any network
-calls. ``CMS_RAW_ROOT`` is overridden so the landed Parquet shows up
-under a directory the test owns.
+The URL resolver is monkey-patched to a synthetic https URL and ``respx``
+intercepts the httpx GET inside ``cms_api.download_file`` so the fixture
+bytes stream through the real download-to-temp path (including the shared
+tenacity retry policy) without any network calls. ``CMS_RAW_ROOT`` is
+overridden so the landed Parquet shows up under a directory the test
+owns.
 """
 
 from __future__ import annotations
 
-import shutil
 from typing import TYPE_CHECKING
 import zipfile
 
@@ -17,7 +17,9 @@ from cms_api import DatasetSpec, load_registry
 from cms_pipelines.defs.cms import qhp_zip_assets
 from cms_pipelines.defs.resources import CMS_RAW_ROOT_ENV
 import duckdb
+import httpx
 import pyarrow.parquet as pq
+import respx
 
 from dagster import AssetsDefinition, materialize
 
@@ -29,6 +31,9 @@ if TYPE_CHECKING:
 
 
 _QHP_SOURCE = "dkan_healthcare_gov_zip"
+# A stable synthetic URL the resolver monkey-patch returns and respx
+# routes on. The host is arbitrary — respx swaps in the mock transport.
+_FAKE_ZIP_URL = "https://fixture.test/qhp.zip"
 
 
 def _qhp_spec() -> DatasetSpec:
@@ -74,16 +79,15 @@ def _zip_xlsx(*, xlsx_path: Path, zip_path: Path, arcname: str | None = None) ->
         archive.write(xlsx_path, arcname=arcname or xlsx_path.name)
 
 
-def _patch_qhp_inputs(
+def _patch_resolver(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    fixture_zip: Path,
-    placeholder_url: str = "https://fake.invalid/qhp.zip",
+    placeholder_url: str = _FAKE_ZIP_URL,
 ) -> list[str]:
-    """Patch the URL resolver and downloader so the asset uses ``fixture_zip``.
+    """Patch the DKAN URL resolver so the asset requests ``placeholder_url``.
 
-    Returns the list of URLs the resolver hands back, so callers can
-    assert the placeholder propagated to the materialization metadata.
+    Returns the list of base URLs the resolver was called with, so callers
+    can assert routing through the correct DKAN host.
     """
     captured: list[str] = []
 
@@ -91,13 +95,13 @@ def _patch_qhp_inputs(
         captured.append(base_url)
         return placeholder_url
 
-    def fake_download(*, url: str, dest: Path) -> None:
-        assert url == placeholder_url
-        shutil.copyfile(fixture_zip, dest)
-
     monkeypatch.setattr(qhp_zip_assets, "get_dkan_dataset_zip_url", fake_resolver)
-    monkeypatch.setattr(qhp_zip_assets, "_download_zip", fake_download)
     return captured
+
+
+def _serve_zip(mock: respx.MockRouter, zip_path: Path, *, url: str = _FAKE_ZIP_URL) -> None:
+    """Route an httpx GET for ``url`` to a 200 response with ``zip_path`` bytes."""
+    mock.get(url).mock(return_value=httpx.Response(200, content=zip_path.read_bytes()))
 
 
 def test_qhp_asset_written_for_every_registry_row() -> None:
@@ -110,6 +114,7 @@ def test_qhp_asset_written_for_every_registry_row() -> None:
         assert asset_def.key.path[-1] == f"cms_{spec.key}"
 
 
+@respx.mock
 def test_qhp_asset_streams_zip_to_parquet(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -120,7 +125,8 @@ def test_qhp_asset_streams_zip_to_parquet(
     zip_path = tmp_path / "fixture.zip"
     _zip_xlsx(xlsx_path=xlsx_path, zip_path=zip_path)
     monkeypatch.setenv(CMS_RAW_ROOT_ENV, str(tmp_path))
-    _patch_qhp_inputs(monkeypatch, fixture_zip=zip_path)
+    _patch_resolver(monkeypatch)
+    _serve_zip(respx.mock, zip_path)
 
     spec = _qhp_spec()
     asset_def = _qhp_asset(spec)
@@ -136,6 +142,7 @@ def test_qhp_asset_streams_zip_to_parquet(
     assert table.column_names == ["State Code", "FIPS County Code", "County Name"]
 
 
+@respx.mock
 def test_qhp_asset_rematerialization_leaves_one_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -144,19 +151,21 @@ def test_qhp_asset_rematerialization_leaves_one_file(
     monkeypatch.setenv(CMS_RAW_ROOT_ENV, str(tmp_path))
     spec = _qhp_spec()
     asset_def = _qhp_asset(spec)
+    _patch_resolver(monkeypatch)
 
     first_xlsx = tmp_path / "first.xlsx"
     _write_qhp_xlsx(dest=first_xlsx)
     first_zip = tmp_path / "first.zip"
     _zip_xlsx(xlsx_path=first_xlsx, zip_path=first_zip)
-    _patch_qhp_inputs(monkeypatch, fixture_zip=first_zip)
+    _serve_zip(respx.mock, first_zip)
     assert materialize([asset_def]).success
 
+    respx.mock.reset()
     second_xlsx = tmp_path / "second.xlsx"
     _write_qhp_xlsx(dest=second_xlsx, rows=[("NY", "36001", "Albany")], a1_count="1 displayed records")
     second_zip = tmp_path / "second.zip"
     _zip_xlsx(xlsx_path=second_xlsx, zip_path=second_zip)
-    _patch_qhp_inputs(monkeypatch, fixture_zip=second_zip)
+    _serve_zip(respx.mock, second_zip)
     assert materialize([asset_def]).success
 
     parquets = list((tmp_path / f"cms_{spec.key}").glob("*.parquet"))
@@ -166,6 +175,7 @@ def test_qhp_asset_rematerialization_leaves_one_file(
     assert table.column("State Code").to_pylist() == ["NY"]
 
 
+@respx.mock
 def test_qhp_asset_emits_zip_url_and_row_count_metadata(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -177,7 +187,8 @@ def test_qhp_asset_emits_zip_url_and_row_count_metadata(
     _zip_xlsx(xlsx_path=xlsx_path, zip_path=zip_path)
     monkeypatch.setenv(CMS_RAW_ROOT_ENV, str(tmp_path))
     placeholder_url = "https://data.healthcare.gov/datafile/py2026/fixture.zip"
-    _patch_qhp_inputs(monkeypatch, fixture_zip=zip_path, placeholder_url=placeholder_url)
+    _patch_resolver(monkeypatch, placeholder_url=placeholder_url)
+    _serve_zip(respx.mock, zip_path, url=placeholder_url)
 
     spec = _qhp_spec()
     asset_def = _qhp_asset(spec)
@@ -191,6 +202,7 @@ def test_qhp_asset_emits_zip_url_and_row_count_metadata(
     assert metadata["zip_url"].value == placeholder_url
 
 
+@respx.mock
 def test_qhp_asset_refuses_empty_xlsx(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -201,7 +213,8 @@ def test_qhp_asset_refuses_empty_xlsx(
     zip_path = tmp_path / "empty.zip"
     _zip_xlsx(xlsx_path=xlsx_path, zip_path=zip_path)
     monkeypatch.setenv(CMS_RAW_ROOT_ENV, str(tmp_path))
-    _patch_qhp_inputs(monkeypatch, fixture_zip=zip_path)
+    _patch_resolver(monkeypatch)
+    _serve_zip(respx.mock, zip_path)
 
     spec = _qhp_spec()
     asset_def = _qhp_asset(spec)
@@ -216,6 +229,7 @@ def test_qhp_asset_refuses_empty_xlsx(
     assert not list(asset_dir.glob(".*.tmp"))
 
 
+@respx.mock
 def test_qhp_asset_rejects_zip_without_xlsx(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -225,7 +239,8 @@ def test_qhp_asset_rejects_zip_without_xlsx(
     with zipfile.ZipFile(zip_path, "w") as archive:
         archive.writestr("readme.txt", "not an excel file")
     monkeypatch.setenv(CMS_RAW_ROOT_ENV, str(tmp_path))
-    _patch_qhp_inputs(monkeypatch, fixture_zip=zip_path)
+    _patch_resolver(monkeypatch)
+    _serve_zip(respx.mock, zip_path)
 
     spec = _qhp_spec()
     asset_def = _qhp_asset(spec)
@@ -234,6 +249,7 @@ def test_qhp_asset_rejects_zip_without_xlsx(
         materialize([asset_def])
 
 
+@respx.mock
 def test_qhp_asset_rejects_zip_with_multiple_xlsx(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -248,7 +264,8 @@ def test_qhp_asset_rejects_zip_with_multiple_xlsx(
         archive.write(xlsx_a, arcname="a.xlsx")
         archive.write(xlsx_b, arcname="b.xlsx")
     monkeypatch.setenv(CMS_RAW_ROOT_ENV, str(tmp_path))
-    _patch_qhp_inputs(monkeypatch, fixture_zip=zip_path)
+    _patch_resolver(monkeypatch)
+    _serve_zip(respx.mock, zip_path)
 
     spec = _qhp_spec()
     asset_def = _qhp_asset(spec)
@@ -257,6 +274,7 @@ def test_qhp_asset_rejects_zip_with_multiple_xlsx(
         materialize([asset_def])
 
 
+@respx.mock
 def test_qhp_asset_routes_through_healthcare_gov_base_url(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -271,7 +289,8 @@ def test_qhp_asset_routes_through_healthcare_gov_base_url(
     zip_path = tmp_path / "fixture.zip"
     _zip_xlsx(xlsx_path=xlsx_path, zip_path=zip_path)
     monkeypatch.setenv(CMS_RAW_ROOT_ENV, str(tmp_path))
-    captured_base_urls = _patch_qhp_inputs(monkeypatch, fixture_zip=zip_path)
+    captured_base_urls = _patch_resolver(monkeypatch)
+    _serve_zip(respx.mock, zip_path)
 
     spec = _qhp_spec()
     asset_def = _qhp_asset(spec)

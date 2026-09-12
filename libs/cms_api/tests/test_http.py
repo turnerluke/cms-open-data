@@ -7,12 +7,25 @@ the wait callable is where the interesting logic lives.
 
 from __future__ import annotations
 
-from cms_api._http import DEFAULT_RETRY_WAIT_MAX, _make_wait, _parse_retry_after_seconds, build_client, request_json
+from typing import TYPE_CHECKING
+
+from cms_api._http import (
+    DEFAULT_RETRY_WAIT_MAX,
+    _make_wait,
+    _parse_retry_after_seconds,
+    build_client,
+    download_file,
+    request_json,
+)
 import httpx
 import respx
 from tenacity import Future, RetryCallState, Retrying, stop_after_attempt
 
 import pytest
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _failed_outcome_from_response(response: httpx.Response) -> Future:
@@ -142,3 +155,91 @@ def test_request_json_still_does_not_retry_non_429_4xx() -> None:
         request_json(client, "GET", "/data")
 
     assert route.call_count == 1
+
+
+@respx.mock
+def test_download_file_happy_path(tmp_path: Path) -> None:
+    """A 200 response's bytes land at ``dest``."""
+    payload = b"col_a,col_b\n1,2\n3,4\n"
+    respx.get("https://example.test/file.csv").mock(return_value=httpx.Response(200, content=payload))
+
+    dest = tmp_path / "file.csv"
+    download_file("https://example.test/file.csv", dest)
+
+    assert dest.read_bytes() == payload
+
+
+@respx.mock
+def test_download_file_retries_429_then_succeeds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A 429-then-200 sequence completes, and dest holds the second response.
+
+    Load-bearing: proves the destination is re-opened fresh per attempt.
+    If the first-attempt bytes leaked into ``dest`` they'd corrupt the
+    file; asserting exact equality to the second payload rules that out.
+    """
+    monkeypatch.setenv("CMS_API_RETRY_WAIT_MAX", "0")
+    monkeypatch.setenv("CMS_API_RETRY_WAIT_MULTIPLIER", "0")
+
+    good_payload = b"final,payload\n1,2\n"
+    route = respx.get("https://example.test/file.csv").mock(
+        side_effect=[
+            httpx.Response(429, headers={"Retry-After": "0"}, content=b"THROTTLED-BODY"),
+            httpx.Response(200, content=good_payload),
+        ],
+    )
+
+    dest = tmp_path / "file.csv"
+    download_file("https://example.test/file.csv", dest)
+
+    assert route.call_count == 2
+    assert dest.read_bytes() == good_payload
+
+
+@respx.mock
+def test_download_file_raises_immediately_on_404_without_writing(tmp_path: Path) -> None:
+    """A 404 surfaces at once and no file is created at ``dest``.
+
+    ``raise_for_status()`` runs before any bytes are written, so a
+    permanent 4xx must never leave an error body sitting at the target
+    path where a downstream reader could mistake it for real data.
+    """
+    route = respx.get("https://example.test/missing.csv").respond(404, content=b"not found")
+
+    dest = tmp_path / "missing.csv"
+    with pytest.raises(httpx.HTTPStatusError):
+        download_file("https://example.test/missing.csv", dest)
+
+    assert not dest.exists()
+    assert route.call_count == 1
+
+
+@respx.mock
+def test_download_file_retries_transport_error_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A first-attempt ``TransportError`` retries and the second attempt lands cleanly.
+
+    This approximates the "mid-stream failure" case: simulating a real
+    mid-stream ``ReadError`` inside respx's mock transport is awkward
+    because the httpx client swallows partially-written state, so a
+    fully-failed first attempt followed by a good one is used instead.
+    It still proves the retry policy applies to ``download_file`` and
+    that a subsequent success writes only the good payload.
+    """
+    monkeypatch.setenv("CMS_API_RETRY_WAIT_MAX", "0")
+    monkeypatch.setenv("CMS_API_RETRY_WAIT_MULTIPLIER", "0")
+
+    good_payload = b"complete,payload\n5,6\n"
+    route = respx.get("https://example.test/file.csv").mock(
+        side_effect=[
+            httpx.ConnectError("simulated transport failure"),
+            httpx.Response(200, content=good_payload),
+        ],
+    )
+
+    dest = tmp_path / "file.csv"
+    download_file("https://example.test/file.csv", dest)
+
+    assert route.call_count == 2
+    assert dest.read_bytes() == good_payload

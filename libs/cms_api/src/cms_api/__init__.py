@@ -1,5 +1,6 @@
 """Sync client library for CMS, Medicaid, Healthcare.gov, and NPPES public APIs."""
 
+from ._http import download_file
 from ._types import JsonObject, JsonValue
 from .dkan import (
     HEALTHCARE_GOV_DKAN_BASE_URL,
@@ -34,6 +35,7 @@ __all__ = [
     "NppesBasic",
     "NppesProvider",
     "NppesTaxonomy",
+    "download_file",
     "fetch_dataset_vintage",
     "get_articles",
     "get_data_api_csv_url",

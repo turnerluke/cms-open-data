@@ -73,6 +73,11 @@ immediately. When a 429 response carries an integer-seconds `Retry-After`
 header the retry loop sleeps for that duration (clamped to
 `CMS_API_RETRY_WAIT_MAX`) instead of following the exponential schedule.
 
+The same policy applies to bulk-file downloads via `cms_api.download_file`
+— GitHub-runner shared egress IPs get 429'd on file GETs (e.g. the CMS Part D
+spending CSV) the same way the JSON APIs do, so the streaming download path
+funnels through the identical retry decorator and env knobs.
+
 ## Adding a new endpoint
 
 1. Identify the dataset/resource and any auth.

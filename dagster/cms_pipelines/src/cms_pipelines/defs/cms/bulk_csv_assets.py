@@ -20,9 +20,10 @@ CSVs (notably the 8.4 GB Open Payments general-payments file on
 ``download.cms.gov``, served by Akamai NetStorage) come back with no
 ``Content-Length`` and no ``Accept-Ranges`` header, so DuckDB httpfs
 cannot do range reads and buffers the entire body — GitHub Actions
-runners OOM and the job dies. Streaming the download in chunks over
-``httpx`` keeps memory flat regardless of file size; the local convert
-is then a plain vectorized DuckDB scan.
+runners OOM and the job dies. Streaming the download in chunks via
+``cms_api.download_file`` keeps memory flat regardless of file size and
+picks up the same 429/5xx retry policy as the JSON APIs; the local
+convert is then a plain vectorized DuckDB scan.
 
 We bypass the Parquet IO manager because returning a ``pyarrow.Table``
 would defeat the streaming win — but we reuse its on-disk layout and
@@ -39,13 +40,13 @@ from cms_api import (
     MEDICAID_BASE_URL,
     OPEN_PAYMENTS_BASE_URL,
     DatasetSpec,
+    download_file,
     get_data_api_csv_url,
     get_dkan_dataset_csv_url,
     get_provider_data_csv_url,
     load_registry,
 )
 import duckdb
-import httpx
 
 from cms_pipelines.defs.cms.vintage_sidecar import capture_dataset_vintage
 from cms_pipelines.defs.io_managers.parquet import publish_parquet, staged_write
@@ -54,16 +55,6 @@ from dagster import AssetExecutionContext, AssetsDefinition, MaterializeResult, 
 
 
 _ASSET_PREFIX = "cms_"
-
-# 512 KiB per chunk keeps download throughput close to line rate without
-# pinning much memory; the multi-GB CMS files spend seconds to minutes
-# in this loop and never hold more than one chunk at a time.
-_DOWNLOAD_CHUNK_BYTES = 512 * 1024
-
-# Generous read timeout: the biggest CMS bulk CSVs are multi-GB served
-# from download.cms.gov and can idle briefly between chunks on slower
-# runners. The default 5s read timeout is way too aggressive.
-_DOWNLOAD_TIMEOUT = httpx.Timeout(30.0, read=600.0)
 
 
 def _resolve_data_api_csv_url(spec: DatasetSpec) -> str:
@@ -140,28 +131,6 @@ _RESOLVERS: dict[str, Callable[[DatasetSpec], str]] = {
 _PROVIDER_BULK_LOAD_OPTIONS_SOURCES = {"dkan_provider_bulk"}
 
 
-def _stream_download(*, csv_url: str, dest: Path) -> None:
-    """Stream ``csv_url`` to ``dest`` in fixed-size chunks over HTTPS.
-
-    Chunks are written straight to disk so the response body is never
-    materialized in Python memory — required because CMS bulk files
-    range from hundreds of MB to ~8 GB. Redirects are followed because
-    ``download.cms.gov`` sometimes 302s through Akamai.
-    """
-    with (
-        dest.open("wb") as fh,
-        httpx.stream(
-            "GET",
-            csv_url,
-            follow_redirects=True,
-            timeout=_DOWNLOAD_TIMEOUT,
-        ) as response,
-    ):
-        response.raise_for_status()
-        for chunk in response.iter_bytes(chunk_size=_DOWNLOAD_CHUNK_BYTES):
-            fh.write(chunk)
-
-
 def _run_bulk_load(
     *,
     csv_url: str,
@@ -204,7 +173,7 @@ def _run_bulk_load(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     local_csv = out_path.parent / f".{uuid.uuid4().hex}.csv.download"
     try:
-        _stream_download(csv_url=csv_url, dest=local_csv)
+        download_file(csv_url, local_csv)
         with duckdb.connect(":memory:") as con:
             relation = con.read_csv(
                 str(local_csv),
