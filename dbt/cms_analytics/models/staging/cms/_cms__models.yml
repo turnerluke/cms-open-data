@@ -2692,3 +2692,352 @@ models:
             expression: |
               premium_adult_individual_age_21 > 0
               or premium_adult_individual_age_21 is null
+
+  - name: stg_cms__hospital_readmissions_reduction
+    description: |
+      Hospital Readmissions Reduction Program (HRRP) — Hospital level,
+      from CMS Care Compare (DKAN dataset `9n3s-kdb3`). One row per
+      hospital per HRRP measure (six measures: `READM-30-AMI-HRRP`,
+      `READM-30-CABG-HRRP`, `READM-30-COPD-HRRP`, `READM-30-HF-HRRP`,
+      `READM-30-HIP-KNEE-HRRP`, `READM-30-PN-HRRP`) — 3,055 hospitals
+      × 6 measures = 18,330 rows. Every measurement window is the
+      single vintage `07/01/2021`–`06/30/2024`. Numeric columns
+      arrive as strings and carry two distinct sentinels: `'N/A'`
+      (36% of rows — 6,610 — ineligible / suppressed per footnote,
+      applied to all three risk-adjusted result columns plus
+      `number_of_readmissions`) and `'Too Few to Report'` (3,683
+      rows of `number_of_readmissions` only — small-count
+      suppression). Both null out under `try_cast`, but the
+      small-count signal is informative in a way the ineligible one
+      is not, so it is preserved as the boolean
+      `is_too_few_to_report`. `number_of_discharges` carries `'N/A'`
+      on 10,088 rows (55%, above the 50% silent-cast threshold);
+      `footnote` (values `''`, `'1'`, `'5'`, `'7'`, `'29'`, with
+      empty string nulled) is retained as its companion signal so
+      downstream marts can explain the null. Grain: (`facility_id`,
+      `measure_name`).
+    columns:
+      - name: facility_id
+        description: |
+          CMS Certification Number (CCN) of the hospital. Grain
+          column with `measure_name`. All six-digit numeric CCNs in
+          this vintage (no `F`-suffixed federal facilities).
+        data_tests:
+          - not_null
+      - name: facility_name
+        description: "Hospital name (trimmed)."
+      - name: state
+        description: |
+          Two-letter state postal code. Covers all 50 states plus
+          `DC` in this vintage; no territories.
+        data_tests:
+          - not_null
+      - name: measure_name
+        description: |
+          HRRP measure identifier. Six values, each covering all
+          3,055 facilities.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - READM-30-AMI-HRRP
+                  - READM-30-CABG-HRRP
+                  - READM-30-COPD-HRRP
+                  - READM-30-HF-HRRP
+                  - READM-30-HIP-KNEE-HRRP
+                  - READM-30-PN-HRRP
+      - name: number_of_discharges
+        description: |
+          Count of eligible discharges in the measurement window;
+          the raw `'N/A'` sentinel (10,088 rows, ~55%) becomes
+          `NULL` via `try_cast`. Above the 50% silent-cast
+          threshold — pair with `footnote` when interpreting the
+          null.
+      - name: footnote
+        description: |
+          CMS suppression footnote code explaining why numeric
+          results are missing. Distinct values in this vintage:
+          `'1'`, `'5'`, `'7'`, `'29'`; empty string becomes `NULL`
+          for the "no footnote" state.
+      - name: excess_readmission_ratio
+        description: |
+          Ratio of predicted-to-expected 30-day readmissions
+          (>1 means worse than the model expected). `'N/A'` (6,610
+          rows, ~36%) becomes `NULL` via `try_cast`. Observed
+          range in this vintage: ~0.47–1.63.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0.4
+                max_value: 2.0
+                inclusive: true
+      - name: predicted_readmission_rate
+        description: |
+          Model-predicted 30-day readmission rate (percent).
+          `'N/A'` becomes `NULL`. Observed range: ~1.9–28.2.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: expected_readmission_rate
+        description: |
+          Model-expected 30-day readmission rate (percent).
+          `'N/A'` becomes `NULL`. Observed range: ~3.1–26.9.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: number_of_readmissions
+        description: |
+          Count of 30-day readmissions in the measurement window.
+          Two sentinels null out under `try_cast`: `'N/A'`
+          (ineligible / suppressed, 6,610 rows) and `'Too Few to
+          Report'` (small-count suppression, 3,683 rows). The
+          small-count case is preserved separately in
+          `is_too_few_to_report`.
+      - name: is_too_few_to_report
+        description: |
+          `true` when the raw `number_of_readmissions` was the
+          literal string `'Too Few to Report'` — CMS's small-count
+          suppression marker, distinct from the generic `'N/A'`
+          ineligible state. Preserved so marts can distinguish
+          "hospital had eligible discharges but too few
+          readmissions to publish" from "hospital had no eligible
+          measure at all". Guards against silent-cast regressions:
+          if the sentinel spelling drifts and this flag stops
+          firing, the model-level `expression_is_true` test below
+          fails.
+        data_tests:
+          - not_null
+      - name: start_date
+        description: |
+          Measurement-window start date parsed from the raw
+          `MM/DD/YYYY` string. Constant `2021-07-01` in this
+          vintage.
+        data_tests:
+          - not_null
+      - name: end_date
+        description: |
+          Measurement-window end date parsed from the raw
+          `MM/DD/YYYY` string. Constant `2024-06-30` in this
+          vintage.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - facility_id
+              - measure_name
+      # Silent-cast regression guard: when the three risk-adjusted
+      # result columns are NULL, `number_of_readmissions` must also
+      # be NULL (both cast from `'N/A'` on the same 6,610 rows). If
+      # a future vintage's sentinel drifts and the two columns
+      # diverge, this test fails loudly.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (excess_readmission_ratio is null)
+                = (predicted_readmission_rate is null)
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (excess_readmission_ratio is null)
+                = (expected_readmission_rate is null)
+      # Small-count flag is only ever set on rows where the numeric
+      # readmission count is NULL — i.e. it doesn't co-exist with a
+      # real integer count.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              not is_too_few_to_report
+              or number_of_readmissions is null
+
+  - name: stg_cms__hospital_value_based_purchasing_total
+    description: |
+      Hospital Value-Based Purchasing (VBP) Program — Total
+      Performance Score, from CMS Care Compare (DKAN dataset
+      `ypbt-wvdk`). One row per Medicare-participating hospital
+      (2,455 rows) with the four VBP domain scores — clinical
+      outcomes, person & community engagement, safety, efficiency
+      & cost reduction — each shipped as both an unweighted
+      (0–100) and a weighted (share of the 100-point total) score,
+      plus the `total_performance_score`. Fiscal year is a constant
+      `'2026'`. Domain scores carry a `'Not Available'` sentinel
+      for facilities that lacked enough measure data in a domain
+      (most on clinical outcomes: 68 rows; safety: 55; person &
+      community engagement: 32; efficiency: 1). `try_cast` turns
+      those into `NULL`s; `total_performance_score` is fully
+      numeric in this vintage. The wordy source column names
+      (`unweighted_normalized_..._domain_score` /
+      `weighted_..._domain_score`) are trimmed to
+      `{unweighted,weighted}_<domain>_score`. Grain: `facility_id`
+      (CCN).
+    columns:
+      - name: fiscal_year
+        description: "Constant `'2026'`; carried for downstream unions."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["2026"]
+      - name: facility_id
+        description: |
+          CMS Certification Number (CCN). Primary key — one row
+          per hospital. All six-digit numeric CCNs in this
+          vintage.
+        data_tests:
+          - not_null
+          - unique
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{6}$'
+      - name: facility_name
+        description: "Hospital name (trimmed)."
+      - name: city
+        description: "City of the hospital address (raw `citytown`, trimmed)."
+      - name: county
+        description: "County or parish of the hospital address (raw `countyparish`, trimmed)."
+      - name: state
+        description: |
+          Two-letter state postal code. Covers 49 states plus `DC`
+          (`MD` is absent — Maryland hospitals are exempt from `VBP`
+          under the state's all-payer model); no territories in this
+          vintage.
+        data_tests:
+          - not_null
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros (raw `zip_code`).
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{5}$'
+      - name: unweighted_clinical_outcomes_score
+        description: |
+          Clinical Outcomes domain unweighted score (0–100). `'Not
+          Available'` (68 rows) becomes `NULL` via `try_cast`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: weighted_clinical_outcomes_score
+        description: |
+          Clinical Outcomes domain weighted score — contribution
+          to the 100-point total (cap ~25). `'Not Available'`
+          becomes `NULL`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: unweighted_person_and_community_engagement_score
+        description: |
+          Person & Community Engagement domain unweighted score
+          (0–100). `'Not Available'` (32 rows) becomes `NULL`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: weighted_person_and_community_engagement_score
+        description: |
+          Person & Community Engagement domain weighted
+          contribution (cap ~33). `'Not Available'` becomes
+          `NULL`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: unweighted_safety_score
+        description: |
+          Safety domain unweighted score (0–100). `'Not
+          Available'` (55 rows) becomes `NULL`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: weighted_safety_score
+        description: |
+          Safety domain weighted contribution (cap ~33). `'Not
+          Available'` becomes `NULL`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: unweighted_efficiency_and_cost_reduction_score
+        description: |
+          Efficiency & Cost Reduction domain unweighted score
+          (0–100). `'Not Available'` (1 row) becomes `NULL`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: weighted_efficiency_and_cost_reduction_score
+        description: |
+          Efficiency & Cost Reduction domain weighted
+          contribution (cap ~33). `'Not Available'` becomes
+          `NULL`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: total_performance_score
+        description: |
+          Overall VBP total performance score (0–100), the
+          weighted sum of the four domain scores. Fully numeric
+          in this vintage — zero `'Not Available'` sentinels,
+          so `not_null` is enforced.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+    data_tests:
+      # Silent-cast regression guards: an unweighted domain score
+      # is NULL iff its weighted twin is NULL — both come from the
+      # same `'Not Available'` sentinel row, so any drift means
+      # the sentinel handling broke.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (unweighted_clinical_outcomes_score is null)
+                = (weighted_clinical_outcomes_score is null)
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (unweighted_person_and_community_engagement_score is null)
+                = (weighted_person_and_community_engagement_score is null)
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (unweighted_safety_score is null)
+                = (weighted_safety_score is null)
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              (unweighted_efficiency_and_cost_reduction_score is null)
+                = (weighted_efficiency_and_cost_reduction_score is null)
