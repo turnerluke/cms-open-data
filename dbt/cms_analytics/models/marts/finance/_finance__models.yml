@@ -1615,3 +1615,409 @@ models:
               - plan_id
               - fips_county_code
               - scenario
+
+  - name: fct_qhp_cost_sharing
+    description: |
+      Deductibles, out-of-pocket maximums, and copay / coinsurance
+      schedules for every certified Qualified Health Plan (QHP),
+      unpivoted from the wide cost-sharing blocks of the four
+      `stg_cms__qhp_landscape_*_2026` staging models into one long
+      fact keyed on the cost-sharing variant. Grain:
+      (`plan_id`, `fips_county_code`, `csr_variant`) — 251,771 rows in
+      the PY2026 vintage.
+
+      Modeling choices to be aware of:
+
+      - `csr_variant` mirrors the CMS column suffix so the mapping to
+        source stays grep-friendly. `'standard'` is the plan's default
+        cost-sharing schedule and is present on every plan × county
+        row (151,160 rows — one per staging source row). `'73_percent'`,
+        `'87_percent'`, and `'94_percent'` are the Silver-only cost-
+        sharing reduction (CSR) variants CMS publishes on the
+        **individual-market medical** file for consumers below
+        specific income thresholds; each variant emits one row per
+        Silver plan × county (33,537 rows × 3 variants = 100,611 CSR
+        rows). Non-Silver individual-medical rows and every SHOP /
+        dental row emit no CSR rows — verified 0 CSR rows outside
+        individual-medical Silver.
+      - The four QHP files carry structurally different cost-sharing
+        columns (individual medical has all four variants; SHOP
+        medical has only Standard; the two dental files replace the
+        medical / drug blocks with a single dental block and drop the
+        nine copay text columns), so `dbt_utils.union_relations`
+        doesn't fit. Each source is unpivoted to the long shape in
+        its own CTE and the four long tables are `union all`-ed; the
+        individual-medical CTE uses a Jinja loop over the four
+        variants so the CSR blocks share one column list rather than
+        being hand-typed four times.
+      - `medical_*` / `drug_*` numeric columns are `NULL` on dental
+        rows; `dental_*` numeric columns are `NULL` on medical rows.
+        The nine `copay_*` text columns are `NULL` on dental rows
+        (dental files carry service-line-specific text like
+        `major_dental_care_adult_cost_share` in staging that doesn't
+        align to the medical copay taxonomy — pull it from the dental
+        staging model when the analysis needs it).
+      - `drug_benefits_integrated` is `TRUE` for medical rows where
+        the plan runs pharmacy spend through the medical accumulator
+        rather than a separate drug MOOP, so `drug_moop_*` and often
+        `drug_deductible_*` land as `NULL` on that row — a real
+        product-design signal, not missing data. In the PY2026
+        vintage every populated medical row is integrated on every
+        variant (200,694 / 200,694 medical rows, `TRUE` on all), so
+        every `drug_moop_*` numeric is `NULL` on medical rows;
+        20,146 medical rows carry a numeric `drug_deductible_*` even
+        with an integrated MOOP (the file's Drug Deductible column
+        disagrees with Drug MOOP for those plans and staging treats
+        MOOP as the canonical integration signal). `NULL` on dental
+        rows (dental has no pharmacy block).
+      - `copay_*` text is passed through unparsed. CMS mixes formats
+        in one column (`$30`, `20% Coinsurance after deductible`,
+        `$25 Copay with deductible and 20% Coinsurance after
+        deductible`, `No Charge`, `Not Applicable`), so a single
+        scalar cast would silently drop most of the signal. Consumers
+        who need structured values can regex-split downstream.
+
+      Sanity signals verified on the PY2026 build:
+
+      - `standard` deductible <= MOOP on all individual medical
+        rows where both are populated: 0 violations across the
+        97,082 rows.
+      - CSR progression: for every Silver plan × county, the medical
+        individual deductible and MOOP monotonically fall from
+        `standard` → `73_percent` → `87_percent` → `94_percent` (CSR
+        raises actuarial value = lowers cost sharing). 0 violations
+        across all 33,537 Silver pairs, on both `medical_deductible_individual`
+        and `medical_moop_individual`.
+      - `dental_moop_*` populated only on dental rows: 0
+        non-dental rows carry a populated `dental_moop_individual`;
+        525 of 51,077 dental rows leave `dental_moop_individual`
+        `NULL` (staging matches — a real product-scope gap on 525
+        plans, not modeling error).
+      - `drug_benefits_integrated` populated on 100% of medical rows
+        (200,694 / 200,694) and `NULL` on 100% of dental rows.
+    columns:
+      - name: plan_id
+        description: |
+          14-character HIOS Standard Component ID identifying the
+          plan. Foreign key to `dim_qhp_plan`. Held at **error**
+          severity — this fact and `dim_qhp_plan` are built from the
+          same four QHP staging models, so 0 orphans by construction.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_qhp_plan')
+                field: plan_id
+      - name: fips_county_code
+        description: |
+          Five-digit FIPS county code (leading-zero preserving text)
+          identifying the county the cost-sharing schedule applies
+          to. Foreign key to `dim_county`. Held at **error**
+          severity — same construction argument as `plan_id`.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_county')
+                field: fips_county_code
+      - name: csr_variant
+        description: |
+          Cost-sharing variant. `'standard'` is the plan's default
+          schedule (present on every row); `'73_percent'`,
+          `'87_percent'`, and `'94_percent'` are the Silver-only CSR
+          variants (individual-market medical file only). The
+          numeric prefix is the CSR actuarial-value target CMS
+          publishes: 94-percent CSR carries the leanest cost
+          sharing, 73-percent the highest.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - standard
+                  - 73_percent
+                  - 87_percent
+                  - 94_percent
+      - name: plan_year
+        description: |
+          Calendar plan year the cost-sharing applies to — `2026`
+          for every row in this vintage.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [2026]
+      - name: market
+        description: |
+          `individual` or `shop`. Denormalized from the source file
+          each row came from.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - individual
+                  - shop
+      - name: product
+        description: |
+          `medical` or `dental`. Denormalized from the source file
+          each row came from.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - medical
+                  - dental
+      - name: metal_level
+        description: |
+          Medical metal tier (`Bronze`, `Expanded Bronze`, `Silver`,
+          `Gold`, `Platinum`, `Catastrophic`) or stand-alone-dental
+          tier (`High`, `Low`). Denormalized from the plan-file's
+          metal-level column — matches `dim_qhp_plan.metal_level`
+          and `fct_qhp_premiums.metal_level` in this vintage. CSR
+          variant rows always carry `metal_level = 'Silver'`.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Bronze
+                  - Expanded Bronze
+                  - Silver
+                  - Gold
+                  - Platinum
+                  - Catastrophic
+                  - High
+                  - Low
+      - name: rating_area
+        description: |
+          CMS rating-area identifier (e.g. `Rating Area 1`) —
+          county-varying, so it lives on the fact rather than
+          `dim_qhp_plan`.
+      - name: medical_deductible_individual
+        description: |
+          Individual-tier medical deductible for the variant, in US
+          dollars. `NULL` on dental rows (dental carries
+          `dental_deductible_*` instead).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: medical_deductible_family
+        description: "Family-tier medical deductible for the variant, in dollars."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: medical_deductible_family_per_person
+        description: |
+          Per-person cap within the family medical deductible for the
+          variant, in dollars.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: drug_deductible_individual
+        description: |
+          Individual-tier drug deductible for the variant, in
+          dollars. `NULL` on dental rows and on medical rows where
+          the plan's drug deductible is integrated with the medical
+          deductible (`Included in Medical` in the source). See
+          `drug_benefits_integrated` for the integration signal.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: drug_deductible_family
+        description: "Family-tier drug deductible, in dollars. See `drug_deductible_individual`."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: drug_deductible_family_per_person
+        description: |
+          Per-person cap within the family drug deductible, in
+          dollars. See `drug_deductible_individual`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: medical_moop_individual
+        description: |
+          Individual-tier medical maximum-out-of-pocket for the
+          variant, in dollars. `NULL` on dental rows.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: medical_moop_family
+        description: "Family-tier medical MOOP for the variant, in dollars."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: medical_moop_family_per_person
+        description: |
+          Per-person cap within the family medical MOOP for the
+          variant, in dollars.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: drug_moop_individual
+        description: |
+          Individual-tier drug MOOP for the variant, in dollars.
+          `NULL` on dental rows and on medical rows where the drug
+          benefit is integrated — in the PY2026 vintage every
+          medical row is integrated, so this column is entirely
+          `NULL` on medical. See `drug_benefits_integrated`.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: drug_moop_family
+        description: "Family-tier drug MOOP for the variant, in dollars."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: drug_moop_family_per_person
+        description: |
+          Per-person cap within the family drug MOOP for the
+          variant, in dollars.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: dental_deductible_individual
+        description: |
+          Individual-tier dental deductible, in dollars. `NULL` on
+          medical rows (medical carries `medical_deductible_*` and
+          `drug_deductible_*` instead). Only the `standard` variant
+          exists for dental.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: dental_deductible_family
+        description: |
+          Family-tier dental deductible, in dollars. Numeric only —
+          staging keeps a text companion
+          (`dental_deductible_family_standard_raw`) for the ~56% of
+          rows where CMS ships sentinels like `See Plan Brochure` or
+          `Not Applicable` that don't cast to a number. Pull the
+          companion from the individual-dental staging model when
+          the sentinel matters.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: dental_deductible_family_per_person
+        description: "Per-person cap within the family dental deductible, in dollars."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: dental_moop_individual
+        description: |
+          Individual-tier dental MOOP, in dollars. `NULL` on medical
+          rows and on 525 dental rows (~1%) where the source leaves
+          the column blank — a real product-scope gap, not modeling
+          error.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: dental_moop_family
+        description: "Family-tier dental MOOP, in dollars."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: dental_moop_family_per_person
+        description: "Per-person cap within the family dental MOOP, in dollars."
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: drug_benefits_integrated
+        description: |
+          `TRUE` when the plan integrates pharmacy spend with the
+          medical accumulator for the variant, so `drug_moop_*` and
+          often `drug_deductible_*` are `NULL` by product design
+          rather than by data quality. Sourced from each variant's
+          staging `drug_benefits_integrated_{variant}` boolean (in
+          turn derived from the source column
+          `Drug Maximum Out Of Pocket - Individual - {Variant} =
+          'Included in Medical'`). `NULL` on dental rows (dental has
+          no pharmacy block); populated on every medical row in the
+          current vintage — a model-level
+          `dbt_utils.expression_is_true` test pins that invariant.
+      - name: copay_primary_care
+        description: |
+          Trimmed cost-share text for a primary-care visit under the
+          variant (e.g. `$30`, `20% Coinsurance after deductible`,
+          `No Charge`). Passed through unparsed — CMS mixes formats
+          in the column, so a single scalar cast would silently drop
+          most of the signal. `NULL` on dental rows.
+      - name: copay_specialist
+        description: "Cost-share text for a specialist visit under the variant. See `copay_primary_care`."
+      - name: copay_emergency_room
+        description: "Cost-share text for an emergency-room visit under the variant. See `copay_primary_care`."
+      - name: copay_inpatient_facility
+        description: "Cost-share text for inpatient facility charges under the variant. See `copay_primary_care`."
+      - name: copay_inpatient_physician
+        description: "Cost-share text for inpatient physician charges under the variant. See `copay_primary_care`."
+      - name: copay_generic_drugs
+        description: "Cost-share text for generic drugs under the variant. See `copay_primary_care`."
+      - name: copay_preferred_brand_drugs
+        description: "Cost-share text for preferred-brand drugs under the variant. See `copay_primary_care`."
+      - name: copay_non_preferred_brand_drugs
+        description: "Cost-share text for non-preferred-brand drugs under the variant. See `copay_primary_care`."
+      - name: copay_specialty_drugs
+        description: "Cost-share text for specialty drugs under the variant. See `copay_primary_care`."
+      - name: as_of
+        description: |
+          Snapshot vintage: `max(modified)` across the four QHP
+          dataset keys in `stg_cms__dataset_vintages` — the same
+          expression `dim_qhp_plan.as_of`, `dim_county.as_of`, and
+          `fct_qhp_premiums.as_of` use, so a plan × county join
+          carries one consistent `as_of`. Constant across rows.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - plan_id
+              - fips_county_code
+              - csr_variant
+      # In the PY2026 vintage every medical row (all variants) is
+      # integrated, so `drug_benefits_integrated` is populated on
+      # 100% of medical rows. A future vintage that ships a medical
+      # row with a NULL flag would fail loudly here rather than
+      # silently under-signaling the integration semantics.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "drug_benefits_integrated is not null"
+          config:
+            where: "product = 'medical'"
