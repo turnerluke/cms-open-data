@@ -29,6 +29,10 @@ with dbt on DuckDB from CMS public datasets.
   Part B utilization, and Part D prescribing: dollar
   concentration, top payers and specialties, and observational
   associations between industry payments and prescribing volume.
+- [Marketplace (QHPs)](/marketplace) — PY2026 Federally-Facilitated
+  Marketplace qualified health plans: benchmark silver premiums by
+  state and county, premium spread by metal level, issuer
+  concentration, the CSR deductible cliff, and stand-alone dental.
 
 ## Warehouse coverage
 
@@ -131,6 +135,24 @@ select
     records,
     cast(payment_year as varchar) || ' program year'
 from cms.clinician_payment_stats
+union all
+select
+    'dim_qhp_plan',
+    plans,
+    cast(plan_year as varchar) || ' plan year'
+from cms.qhp_stats
+union all
+select
+    'fct_qhp_premiums',
+    premium_rows,
+    cast(states as varchar) || ' FFM states'
+from cms.qhp_stats
+union all
+select
+    'fct_qhp_cost_sharing',
+    cost_sharing_rows,
+    cast(counties as varchar) || ' counties'
+from cms.qhp_stats
 order by mart
 ```
 
