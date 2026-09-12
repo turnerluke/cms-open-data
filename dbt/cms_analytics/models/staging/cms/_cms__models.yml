@@ -2194,3 +2194,501 @@ models:
           without filtering.
         data_tests:
           - not_null
+
+  - name: stg_cms__qhp_landscape_individual_medical_2026
+    description: |
+      QHP Landscape PY2026 Individual Medical (data.healthcare.gov
+      DKAN dataset `6fe7fb77-7291-4104-952f-7c7e2c5d0c45`). One row
+      per certified medical plan × county on the individual FFM
+      market — 97,082 rows across 30 states (state-based-exchange
+      states aren't in the FFM PUFs). Column set is the widest of
+      the four QHP files: identity + URLs, 37 premium scenarios
+      (child/adult single, couple, and couple/individual +
+      1/2/3-or-more-children combinations, priced at multiple ages),
+      plus four cost-sharing blocks — Standard, and the 73/87/94
+      percent actuarial-value silver CSR variants that apply only to
+      silver-metal plans. Staging strips `$` / `,` from money strings
+      and casts premiums / deductibles / MOOPs to `decimal(12,2)`;
+      copay/coinsurance columns (`$30`, `20% Coinsurance after
+      deductible`, `No Charge`, `$25 Copay with deductible and 20%
+      Coinsurance after deductible`, ...) stay as trimmed text since
+      they mix formats. `EHB Percent of Total Premium` is stored on
+      the percent scale (94.69–100.00 in this vintage). Constants
+      `plan_year=2026`, `market='individual'`, `product='medical'`
+      let downstream unions across the four QHP files filter without
+      re-joining. CMS ships the 94 percent CSR block with
+      inconsistent header casing — lowercase `individual`, doubled
+      spaces around `Family  -` — quoted verbatim in the SQL.
+      Section-separator source columns (`Premium Scenarios`,
+      `Standard Plan Cost Sharing`, `73/87/94 Percent Actuarial
+      Value Silver Plan Cost Sharing`) are all-NULL header rows and
+      are excluded. Grain: (`plan_id`, `fips_county_code`).
+    columns:
+      - name: plan_year
+        description: "Constant `2026`; carried for downstream unions."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [2026]
+      - name: market
+        description: "Constant `'individual'`; distinguishes from `shop`."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["individual"]
+      - name: product
+        description: "Constant `'medical'`; distinguishes from `dental`."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["medical"]
+      - name: state_code
+        description: |
+          Two-letter state postal code (raw `State Code`). Only the
+          30 FFM states appear — state-based exchange states run
+          their own landscapes and aren't in these PUFs.
+        data_tests:
+          - not_null
+      - name: fips_county_code
+        description: |
+          Five-digit state+county FIPS code (raw `FIPS County Code`),
+          kept as string to preserve leading zeros. Grain column
+          with `plan_id`.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{5}$'
+      - name: plan_id
+        description: |
+          14-character HIOS plan identifier (raw `Plan ID (Standard
+          Component)`). Grain column with `fips_county_code`.
+        data_tests:
+          - not_null
+      - name: hios_issuer_id
+        description: |
+          Five-digit HIOS issuer identifier (raw `HIOS Issuer ID`);
+          leading five characters of `plan_id`.
+        data_tests:
+          - not_null
+      - name: metal_level
+        description: |
+          ACA metal level. Six values on individual medical:
+          `Bronze`, `Expanded Bronze`, `Silver`, `Gold`, `Platinum`,
+          `Catastrophic`. The 73/87/94 percent CSR blocks are only
+          populated when `metal_level = 'Silver'`.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Bronze
+                  - Expanded Bronze
+                  - Silver
+                  - Gold
+                  - Platinum
+                  - Catastrophic
+      - name: standardized_plan_option
+        description: |
+          `Design 1`, `Design 2`, `Design 3` for CMS's standardized
+          plan options, or `Not Applicable`. Individual medical only
+          — SHOP and dental files don't carry this column.
+      - name: source_system
+        description: |
+          Certification-system provenance: `HIOS` or `SERFF`. Which
+          system CMS received the plan filing through; not a data-
+          quality signal.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["HIOS", "SERFF"]
+      - name: ehb_percent_of_total_premium
+        description: |
+          Share of the premium attributable to Essential Health
+          Benefits, stored on the percent scale (94.69–100.00 in
+          this vintage). Raw column arrives as an `NN.NN%` string;
+          the trailing `%` is stripped before casting.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: premium_adult_individual_age_40
+        description: |
+          Monthly premium (USD) for a 40-year-old adult individual.
+          PY2026 range is $277.59–$3,051.03 with a $715 mean —
+          middle-band anchor for plausibility checks.
+      - name: medical_moop_individual_standard
+        description: |
+          Standard individual medical maximum out-of-pocket
+          (USD). Fully populated (no sentinels) in this vintage;
+          numeric cast is lossless.
+        data_tests:
+          - not_null
+      - name: medical_deductible_family_per_person_standard
+        description: |
+          Standard family (per-person) medical deductible (USD).
+          118 rows carry the sentinel `Not Applicable` (~0.1% of
+          the file), which the numeric cast nulls; below the
+          50-percent threshold that would justify a raw-text
+          companion.
+      - name: drug_benefits_integrated_standard
+        description: |
+          `true` when the plan's Standard drug benefit is
+          integrated with the medical benefit (source column
+          `Drug Maximum Out Of Pocket - Individual - Standard`
+          carries the sentinel `Included in Medical`) — 100% of
+          rows in this vintage. Preserves the product-design
+          signal that the numeric `drug_moop_*_standard` try_cast
+          columns silently drop.
+        data_tests:
+          - not_null
+      - name: drug_benefits_integrated_73_percent
+        description: |
+          `true` when the 73-percent CSR drug benefit is
+          integrated with the medical benefit. NULL for non-
+          silver rows (no CSR block); 100% `true` where
+          populated in this vintage.
+      - name: drug_benefits_integrated_87_percent
+        description: |
+          `true` when the 87-percent CSR drug benefit is
+          integrated with the medical benefit. NULL for non-
+          silver rows; 100% `true` where populated.
+      - name: drug_benefits_integrated_94_percent
+        description: |
+          `true` when the 94-percent CSR drug benefit is
+          integrated with the medical benefit. NULL for non-
+          silver rows; 100% `true` where populated. Sourced
+          from the CMS-inconsistent-cased column `Drug Maximum
+          Out Of Pocket - individual - 94 Percent` (lowercase
+          `individual`).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - plan_id
+              - fips_county_code
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              premium_adult_individual_age_21 > 0
+              or premium_adult_individual_age_21 is null
+
+  - name: stg_cms__qhp_landscape_individual_dental_2026
+    description: |
+      QHP Landscape PY2026 Individual Dental (data.healthcare.gov
+      DKAN dataset `0c494938-ccdb-412a-be89-9cb69fd82e28`). One row
+      per certified stand-alone dental plan × county on the
+      individual FFM market — 50,933 rows across 30 states. Identity
+      + eight service `(Coverage)` flag columns (`Covered` / `Not
+      Covered` / `Not Applicable`), 37 premium scenarios, and a
+      single Standard dental cost-sharing block (dental deductibles
+      / MOOPs cast to `decimal(12,2)`; per-service copay text stays
+      as trimmed text). No drug formulary, no CSR variants, no EHB
+      column, and metal levels are `High` / `Low` — not the medical
+      bronze/silver/gold ladder. Note that CMS spells the 3-child
+      brackets `Couple+3 children` on dental files (vs `Couple+3 or
+      more Children` on medical); staging normalises to
+      `_3_or_more_children_` suffixes so unions across the four QHP
+      files align. Constants `plan_year=2026`,
+      `market='individual'`, `product='dental'`. Grain: (`plan_id`,
+      `fips_county_code`).
+    columns:
+      - name: plan_year
+        description: "Constant `2026`; carried for downstream unions."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [2026]
+      - name: market
+        description: "Constant `'individual'`."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["individual"]
+      - name: product
+        description: "Constant `'dental'`."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["dental"]
+      - name: state_code
+        description: "Two-letter state postal code (30 FFM states)."
+        data_tests:
+          - not_null
+      - name: fips_county_code
+        description: |
+          Five-digit state+county FIPS code, kept as string. Grain
+          column with `plan_id`.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{5}$'
+      - name: plan_id
+        description: |
+          14-character HIOS plan identifier. Grain column with
+          `fips_county_code`.
+        data_tests:
+          - not_null
+      - name: metal_level
+        description: |
+          Dental metal level. Two values: `High` and `Low` — dental
+          plans don't use the medical bronze/silver/gold ladder.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["High", "Low"]
+      - name: source_system
+        description: "Certification-system provenance: `HIOS` or `SERFF`."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["HIOS", "SERFF"]
+      - name: premium_adult_individual_age_40
+        description: |
+          Monthly premium (USD) for a 40-year-old adult individual.
+          PY2026 range is $6.75–$67.00 with a $23 mean — dental
+          premiums are ~2 orders of magnitude below medical.
+      - name: dental_deductible_individual_standard
+        description: |
+          Standard individual dental deductible (USD). ~2.5% of
+          rows carry the sentinel `Not Applicable` (nulled by
+          the numeric cast); below the 50-percent threshold that
+          would justify a raw-text companion.
+      - name: dental_deductible_family_standard
+        description: |
+          Standard family dental deductible (USD). The numeric
+          cast silently drops ~56% of rows — ~44% carry the
+          sentinel `See Plan Brochure` and ~12% `Not Applicable`.
+          The raw trimmed source string is preserved in
+          `dental_deductible_family_standard_raw` so downstream
+          consumers can distinguish those cases from a genuine
+          missing value.
+      - name: dental_deductible_family_standard_raw
+        description: |
+          Trimmed raw text of `Dental Deductible - Family -
+          Standard`. Companion to the numeric column; captures
+          the CMS sentinels (`See Plan Brochure`, `Not
+          Applicable`) that the numeric cast nulls.
+      - name: dental_deductible_family_per_person_standard
+        description: |
+          Standard family (per-person) dental deductible (USD).
+          ~12% of rows carry `Not Applicable`; below the
+          50-percent threshold — sentinel documented, no
+          companion column.
+      - name: dental_moop_individual_standard
+        description: |
+          Standard individual dental MOOP (USD). ~1% of rows
+          carry `Not Applicable`; sentinel documented.
+      - name: dental_moop_family_standard
+        description: |
+          Standard family dental MOOP (USD). ~1% `Not
+          Applicable` and ~1% `See Plan Brochure` (2% total
+          loss); below the 50-percent threshold.
+      - name: dental_moop_family_per_person_standard
+        description: |
+          Standard family (per-person) dental MOOP (USD). ~1%
+          of rows carry `Not Applicable`; sentinel documented.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - plan_id
+              - fips_county_code
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              premium_adult_individual_age_21 > 0
+              or premium_adult_individual_age_21 is null
+
+  - name: stg_cms__qhp_landscape_shop_medical_2026
+    description: |
+      QHP Landscape PY2026 SHOP Medical (data.healthcare.gov DKAN
+      dataset `d1241e9c-2a73-435c-afb0-f231645b63c8`). One row per
+      certified SHOP-market medical plan × county — the thinnest
+      medical file at 3,001 rows across only 4 states (AL, MT, NH,
+      WI), because most FFM states no longer offer SHOP medical
+      plans. Same identity + premium scenarios + Standard cost-
+      sharing block as individual medical, but SHOP does not carry
+      the 73/87/94 percent CSR variants (CSRs are individual-market
+      only), the EHB-percent column, or the standardized-plan
+      option. Constants `plan_year=2026`, `market='shop'`,
+      `product='medical'`. Grain: (`plan_id`, `fips_county_code`).
+    columns:
+      - name: plan_year
+        description: "Constant `2026`."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [2026]
+      - name: market
+        description: "Constant `'shop'`; distinguishes from `individual`."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["shop"]
+      - name: product
+        description: "Constant `'medical'`."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["medical"]
+      - name: state_code
+        description: |
+          Two-letter state postal code — PY2026 SHOP medical covers
+          just AL, MT, NH, WI.
+        data_tests:
+          - not_null
+      - name: fips_county_code
+        description: |
+          Five-digit state+county FIPS code, kept as string. Grain
+          column with `plan_id`.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{5}$'
+      - name: plan_id
+        description: |
+          14-character HIOS plan identifier. Grain column with
+          `fips_county_code`.
+        data_tests:
+          - not_null
+      - name: metal_level
+        description: |
+          ACA metal level. SHOP medical uses the same ladder as
+          individual medical (bronze / silver / gold / platinum,
+          plus expanded bronze; no catastrophic in the current
+          vintage).
+        data_tests:
+          - not_null
+      - name: source_system
+        description: "Certification-system provenance: `HIOS` or `SERFF`."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["HIOS", "SERFF"]
+      - name: medical_moop_individual_standard
+        description: |
+          Standard individual medical MOOP (USD). Fully populated
+          (no sentinels) in this vintage; numeric cast is lossless.
+        data_tests:
+          - not_null
+      - name: drug_benefits_integrated_standard
+        description: |
+          `true` when the plan's drug benefit is integrated with
+          the medical benefit (source `Drug Maximum Out Of Pocket
+          - Individual - Standard` = `Included in Medical`) —
+          100% of rows in this PY2026 SHOP vintage. Preserves the
+          product-design signal that the numeric `drug_moop_*`
+          try_cast columns silently drop.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - plan_id
+              - fips_county_code
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              premium_adult_individual_age_21 > 0
+              or premium_adult_individual_age_21 is null
+
+  - name: stg_cms__qhp_landscape_shop_dental_2026
+    description: |
+      QHP Landscape PY2026 SHOP Dental (data.healthcare.gov DKAN
+      dataset `1e4852dd-a489-4ef0-ab71-b424bfca516e`). One row per
+      certified SHOP-market stand-alone dental plan × county — the
+      thinnest QHP file at 144 rows, all in WI. Same schema as
+      individual dental (identity + `(Coverage)` flags + premium
+      scenarios + Standard cost-sharing); the dental-only files
+      spell the 3-child brackets as `Couple+3 children` and we
+      normalise column suffixes to `_3_or_more_children_` so unions
+      across the four QHP files align. Constants `plan_year=2026`,
+      `market='shop'`, `product='dental'`. Grain: (`plan_id`,
+      `fips_county_code`).
+    columns:
+      - name: plan_year
+        description: "Constant `2026`."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [2026]
+      - name: market
+        description: "Constant `'shop'`."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["shop"]
+      - name: product
+        description: "Constant `'dental'`."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["dental"]
+      - name: state_code
+        description: "Two-letter state postal code — PY2026 SHOP dental is WI only."
+        data_tests:
+          - not_null
+      - name: fips_county_code
+        description: |
+          Five-digit state+county FIPS code, kept as string. Grain
+          column with `plan_id`.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{5}$'
+      - name: plan_id
+        description: |
+          14-character HIOS plan identifier. Grain column with
+          `fips_county_code`.
+        data_tests:
+          - not_null
+      - name: metal_level
+        description: |
+          Dental metal level — `High` or `Low`, same convention as
+          the individual dental file.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["High", "Low"]
+      - name: source_system
+        description: "Certification-system provenance: `HIOS` or `SERFF`."
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["HIOS", "SERFF"]
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - plan_id
+              - fips_county_code
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              premium_adult_individual_age_21 > 0
+              or premium_adult_individual_age_21 is null
