@@ -3,11 +3,21 @@
 # ==============================================================================================================================
 # Automated linting report for GitHub pull requests.
 #
-# Runs linting and formatting checks on modified files,
-# provides feedback directly in PR comments.
+# Runs linting and formatting checks on modified files. Each linter runs
+# as a separate job for parallel execution and reports its own red/green
+# check status. PR comment feedback is consolidated: passing linters are
+# silent, and any failures are collected by the `lint_report` job into a
+# single shared comment (marker `<!-- lint-report -->`) that is updated
+# in place on subsequent pushes and deleted once every linter passes.
+#
+# Mechanics: a lint job that fails uploads its captured output as a
+# `lint-output-<linter>` artifact before setting its job status to
+# failed. The `lint_report` job (needs: all linters, runs unless the
+# workflow was cancelled) reads each job's result, downloads whatever
+# failure artifacts exist, and upserts or deletes the shared comment.
 #
 # Uses smart file detection to only run relevant linters based on the types of
-# files changed. Each linter runs as a separate job for parallel execution.
+# files changed.
 #
 # SUPPORTED FILE TYPES:
 # - Python (.py)     -> ruff
@@ -86,7 +96,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -133,102 +142,19 @@ jobs:
             echo "ruff_status=failure" >> $GITHUB_OUTPUT
             echo "ruff check failed"
             cat ruff_output.txt
-            exit 1
           fi
+        continue-on-error: true
 
-      - name: Comment PR with ruff results
-        if: always()
-        uses: actions/github-script@v9
+      - name: Upload ruff output
+        if: steps.ruff.outputs.ruff_status == 'failure'
+        uses: actions/upload-artifact@v7
         with:
-          script: |
-            const fs = require('fs');
-            const commentMarker = '<!-- ruff-report -->';
+          name: lint-output-ruff
+          path: ruff_output.txt
 
-            const changedFiles = '${{ steps.changed-files.outputs.all_changed_files }}';
-            const files = changedFiles.split(' ').filter(f => f.trim() !== '');
-            const anyChanged = '${{ steps.changed-files.outputs.any_changed }}';
-
-            // If no files to check, delete existing comment if present
-            if (files.length === 0 || anyChanged !== 'true') {
-              const { data: comments } = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-              });
-
-              const existingComment = comments.find(
-                c => c.body.includes(commentMarker)
-              );
-
-              if (existingComment) {
-                await github.rest.issues.deleteComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: existingComment.id
-                });
-              }
-              return;
-            }
-
-            let ruffOutput = '';
-            let status = '${{ steps.ruff.outputs.ruff_status }}';
-
-            try {
-              ruffOutput = fs.readFileSync('ruff_output.txt', 'utf8');
-              ruffOutput = ruffOutput.replace(/\x1b\[[0-9;]*m/g, '');
-            } catch (error) {
-              ruffOutput = 'No output file generated';
-            }
-
-            let comment = commentMarker + '\n';
-
-            if (status === 'success') {
-              comment += `## ✅ Ruff Check Passed\n\n`;
-              comment += `All Python files passed linting.\n\n`;
-              comment += `**Files checked:**\n`;
-              files.forEach(file => {
-                comment += `- \`${file}\`\n`;
-              });
-            } else if (status === 'failure') {
-              comment += `## ❌ Ruff Check Failed\n\n`;
-              comment += `**Files with linting issues:**\n`;
-              files.forEach(file => {
-                comment += `- \`${file}\`\n`;
-              });
-              comment += `\n**Linting output:**\n\n`;
-              comment += '```\n' + ruffOutput + '\n```\n\n';
-              comment += `Please fix these linting issues.\n`;
-            }
-
-            const maxLen = ${{ env.MAX_COMMENT_LENGTH }};
-            if (comment.length > maxLen) {
-              const msg = '\n\n---\n*Truncated: comment size limit.*\n';
-              comment = comment.substring(0, maxLen - msg.length) + msg;
-            }
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const existingComment = comments.find(c => c.body.includes(commentMarker));
-
-            if (existingComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existingComment.id,
-                body: comment
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: comment
-              });
-            }
+      - name: Fail if ruff failed
+        if: steps.ruff.outputs.ruff_status == 'failure'
+        run: exit 1
 
   # ============================================================================================================================
   # Markdownlint
@@ -238,7 +164,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -284,96 +209,12 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Comment PR with markdownlint results
-        if: always()
-        uses: actions/github-script@v9
+      - name: Upload markdownlint output
+        if: steps.markdownlint.outputs.markdownlint_status == 'failure'
+        uses: actions/upload-artifact@v7
         with:
-          script: |
-            const fs = require('fs');
-            const commentMarker = '<!-- markdownlint-report -->';
-            const changedFiles = '${{ steps.changed-files.outputs.all_changed_files }}';
-            const files = changedFiles.split(' ').filter(f => f.trim() !== '');
-            const anyChanged = '${{ steps.changed-files.outputs.any_changed }}';
-
-            if (files.length === 0 || anyChanged !== 'true') {
-              const { data: comments } = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-              });
-
-              const existingComment = comments.find(
-                c => c.body.includes(commentMarker)
-              );
-
-              if (existingComment) {
-                await github.rest.issues.deleteComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: existingComment.id
-                });
-              }
-              return;
-            }
-
-            const status = '${{ steps.markdownlint.outputs.markdownlint_status }}';
-
-            let markdownlintOutput = '';
-            try {
-              markdownlintOutput = fs.readFileSync('markdownlint_output.txt', 'utf8');
-            } catch (error) {
-              markdownlintOutput = 'No output file generated';
-            }
-
-            let comment = commentMarker + '\n';
-
-            if (status === 'success') {
-              comment += `## ✅ Markdownlint Check Passed\n\n`;
-              comment += `All Markdown files passed linting.\n\n`;
-              comment += `**Files checked:**\n`;
-              files.forEach(file => {
-                comment += `- \`${file}\`\n`;
-              });
-            } else {
-              comment += `## ❌ Markdownlint Check Failed\n\n`;
-              comment += `**Files with linting issues:**\n`;
-              files.forEach(file => {
-                comment += `- \`${file}\`\n`;
-              });
-              comment += `\n**Linting errors:**\n\n`;
-              comment += '```\n' + markdownlintOutput + '\n```\n\n';
-              comment += `Run \`npx markdownlint-cli2 --fix\` to auto-fix issues.\n`;
-            }
-
-            const maxLen = ${{ env.MAX_COMMENT_LENGTH }};
-            if (comment.length > maxLen) {
-              const msg = '\n\n---\n*Truncated: comment size limit.*\n';
-              comment = comment.substring(0, maxLen - msg.length) + msg;
-            }
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const existingComment = comments.find(c => c.body.includes(commentMarker));
-
-            if (existingComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existingComment.id,
-                body: comment
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: comment
-              });
-            }
+          name: lint-output-markdownlint
+          path: markdownlint_output.txt
 
       - name: Fail if markdownlint failed
         if: steps.markdownlint.outputs.markdownlint_status == 'failure'
@@ -387,7 +228,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -429,92 +269,12 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Comment PR with yamllint results
-        if: always()
-        uses: actions/github-script@v9
+      - name: Upload yamllint output
+        if: steps.yamllint.outputs.yamllint_status == 'failure'
+        uses: actions/upload-artifact@v7
         with:
-          script: |
-            const fs = require('fs');
-            const commentMarker = '<!-- yamllint-report -->';
-            const changedFiles = '${{ steps.changed-files.outputs.all_changed_files }}';
-            const files = changedFiles.split(' ').filter(f => f.trim() !== '');
-            const anyChanged = '${{ steps.changed-files.outputs.any_changed }}';
-
-            if (files.length === 0 || anyChanged !== 'true') {
-              const { data: comments } = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-              });
-
-              const existingComment = comments.find(
-                c => c.body.includes(commentMarker)
-              );
-
-              if (existingComment) {
-                await github.rest.issues.deleteComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: existingComment.id
-                });
-              }
-              return;
-            }
-
-            let yamllintOutput = '';
-            const status = '${{ steps.yamllint.outputs.yamllint_status }}';
-
-            try {
-              yamllintOutput = fs.readFileSync('yamllint_output.txt', 'utf8');
-            } catch (error) {
-              yamllintOutput = 'No output file generated';
-            }
-
-            let comment = commentMarker + '\n';
-
-            if (status === 'success') {
-              comment += `## ✅ Yamllint Check Passed\n\n`;
-              comment += `All YAML files passed linting.\n\n`;
-              comment += `**Files checked:**\n`;
-              files.forEach(file => {
-                comment += `- \`${file}\`\n`;
-              });
-            } else {
-              comment += `## ❌ Yamllint Check Failed\n\n`;
-              comment += `**Linting errors:**\n\n`;
-              comment += '```\n' + yamllintOutput + '\n```\n\n';
-              comment += `Run \`yamllint -c .yamllint.yml <file>\` to check specific files.\n`;
-            }
-
-            const maxLen = ${{ env.MAX_COMMENT_LENGTH }};
-            if (comment.length > maxLen) {
-              const msg = '\n\n---\n*Truncated: comment size limit.*\n';
-              comment = comment.substring(0, maxLen - msg.length) + msg;
-            }
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const existingComment = comments.find(c => c.body.includes(commentMarker));
-
-            if (existingComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existingComment.id,
-                body: comment
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: comment
-              });
-            }
+          name: lint-output-yamllint
+          path: yamllint_output.txt
 
       - name: Fail if yamllint failed
         if: steps.yamllint.outputs.yamllint_status == 'failure'
@@ -528,7 +288,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -570,97 +329,12 @@ jobs:
           cat prettier_output.txt
         continue-on-error: true
 
-      - name: Comment PR with prettier results
-        if: always()
-        uses: actions/github-script@v9
+      - name: Upload prettier output
+        if: steps.prettier.outputs.prettier_status == 'failure'
+        uses: actions/upload-artifact@v7
         with:
-          script: |
-            const fs = require('fs');
-            const commentMarker = '<!-- prettier-report -->';
-            const changedFiles = '${{ steps.changed-files.outputs.all_changed_files }}';
-            const files = changedFiles.split(' ').filter(f => f.trim() !== '');
-            const anyChanged = '${{ steps.changed-files.outputs.any_changed }}';
-
-            if (files.length === 0 || anyChanged !== 'true') {
-              const { data: comments } = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-              });
-
-              const existingComment = comments.find(
-                c => c.body.includes(commentMarker)
-              );
-
-              if (existingComment) {
-                await github.rest.issues.deleteComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: existingComment.id
-                });
-              }
-              return;
-            }
-
-            let prettierOutput = '';
-            const status = '${{ steps.prettier.outputs.prettier_status }}';
-
-            try {
-              prettierOutput = fs.readFileSync('prettier_output.txt', 'utf8');
-              prettierOutput = prettierOutput.replace(/\x1b\[[0-9;]*m/g, '');
-            } catch (error) {
-              prettierOutput = 'No output file generated';
-            }
-
-            let comment = commentMarker + '\n';
-
-            if (status === 'success') {
-              comment += `## ✅ Prettier Check Passed\n\n`;
-              comment += `All files are properly formatted.\n\n`;
-              comment += `**Files checked:**\n`;
-              files.forEach(file => {
-                comment += `- \`${file}\`\n`;
-              });
-            } else if (status === 'failure') {
-              comment += `## ❌ Prettier Check Failed\n\n`;
-              comment += `**Files needing formatting:**\n`;
-              files.forEach(file => {
-                comment += `- \`${file}\`\n`;
-              });
-              comment += `\n**Formatting output:**\n\n`;
-              comment += '```\n' + prettierOutput + '\n```\n\n';
-              comment += `Run \`npx prettier --write .\` to fix formatting.\n`;
-            }
-
-            const maxLen = ${{ env.MAX_COMMENT_LENGTH }};
-            if (comment.length > maxLen) {
-              const msg = '\n\n---\n*Truncated: comment size limit.*\n';
-              comment = comment.substring(0, maxLen - msg.length) + msg;
-            }
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const existingComment = comments.find(c => c.body.includes(commentMarker));
-
-            if (existingComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existingComment.id,
-                body: comment
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: comment
-              });
-            }
+          name: lint-output-prettier
+          path: prettier_output.txt
 
       - name: Fail if prettier failed
         if: steps.prettier.outputs.prettier_status == 'failure'
@@ -674,7 +348,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -710,92 +383,12 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Comment PR with shellcheck results
-        if: always()
-        uses: actions/github-script@v9
+      - name: Upload shellcheck output
+        if: steps.shellcheck.outputs.shellcheck_status == 'failure'
+        uses: actions/upload-artifact@v7
         with:
-          script: |
-            const fs = require('fs');
-            const commentMarker = '<!-- shellcheck-report -->';
-            const changedFiles = '${{ steps.changed-files.outputs.all_changed_files }}';
-            const files = changedFiles.split(' ').filter(f => f.trim() !== '');
-            const anyChanged = '${{ steps.changed-files.outputs.any_changed }}';
-
-            if (files.length === 0 || anyChanged !== 'true') {
-              const { data: comments } = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-              });
-
-              const existingComment = comments.find(
-                c => c.body.includes(commentMarker)
-              );
-
-              if (existingComment) {
-                await github.rest.issues.deleteComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: existingComment.id
-                });
-              }
-              return;
-            }
-
-            let shellcheckOutput = '';
-            const status = '${{ steps.shellcheck.outputs.shellcheck_status }}';
-
-            try {
-              shellcheckOutput = fs.readFileSync('shellcheck_output.txt', 'utf8');
-            } catch (error) {
-              shellcheckOutput = 'No output file generated';
-            }
-
-            let comment = commentMarker + '\n';
-
-            if (status === 'success') {
-              comment += `## ✅ Shellcheck Passed\n\n`;
-              comment += `All shell scripts passed linting.\n\n`;
-              comment += `**Files checked:**\n`;
-              files.forEach(file => {
-                comment += `- \`${file}\`\n`;
-              });
-            } else {
-              comment += `## ❌ Shellcheck Failed\n\n`;
-              comment += `**Linting errors:**\n\n`;
-              comment += '```\n' + shellcheckOutput + '\n```\n\n';
-              comment += `Run \`shellcheck <file>\` to check specific files.\n`;
-            }
-
-            const maxLen = ${{ env.MAX_COMMENT_LENGTH }};
-            if (comment.length > maxLen) {
-              const msg = '\n\n---\n*Truncated: comment size limit.*\n';
-              comment = comment.substring(0, maxLen - msg.length) + msg;
-            }
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const existingComment = comments.find(c => c.body.includes(commentMarker));
-
-            if (existingComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existingComment.id,
-                body: comment
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: comment
-              });
-            }
+          name: lint-output-shellcheck
+          path: shellcheck_output.txt
 
       - name: Fail if shellcheck failed
         if: steps.shellcheck.outputs.shellcheck_status == 'failure'
@@ -809,7 +402,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -849,66 +441,12 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Comment PR with gitleaks results
-        if: always()
-        uses: actions/github-script@v9
+      - name: Upload gitleaks output
+        if: steps.gitleaks.outputs.gitleaks_status == 'failure'
+        uses: actions/upload-artifact@v7
         with:
-          script: |
-            const fs = require('fs');
-            const commentMarker = '<!-- gitleaks-report -->';
-            const status = '${{ steps.gitleaks.outputs.gitleaks_status }}';
-
-            let gitleaksOutput = '';
-            try {
-              gitleaksOutput = fs.readFileSync('gitleaks_output.txt', 'utf8');
-              gitleaksOutput = gitleaksOutput.replace(/\x1b\[[0-9;]*m/g, '');
-            } catch (error) {
-              gitleaksOutput = 'No output file generated';
-            }
-
-            let comment = commentMarker + '\n';
-
-            if (status === 'success') {
-              comment += `## ✅ GitLeaks Check Passed\n\n`;
-              comment += `No secrets or sensitive data detected.\n\n`;
-              comment += `**Scanned commits:** \`origin/${{ github.base_ref }}..HEAD\`\n`;
-            } else {
-              comment += `## ❌ GitLeaks Check Failed\n\n`;
-              comment += `**Potential secrets or sensitive data detected!**\n\n`;
-              comment += `**Detection output:**\n\n`;
-              comment += '```\n' + gitleaksOutput + '\n```\n\n';
-              comment += `⚠️ Do not commit secrets, API keys, passwords, or sensitive data.\n`;
-            }
-
-            const maxLen = ${{ env.MAX_COMMENT_LENGTH }};
-            if (comment.length > maxLen) {
-              const msg = '\n\n---\n*Truncated: comment size limit.*\n';
-              comment = comment.substring(0, maxLen - msg.length) + msg;
-            }
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const existingComment = comments.find(c => c.body.includes(commentMarker));
-
-            if (existingComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existingComment.id,
-                body: comment
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: comment
-              });
-            }
+          name: lint-output-gitleaks
+          path: gitleaks_output.txt
 
       - name: Fail if gitleaks failed
         if: steps.gitleaks.outputs.gitleaks_status == 'failure'
@@ -922,7 +460,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -978,45 +515,173 @@ jobs:
           else
             echo "commitlint_status=failure" >> $GITHUB_OUTPUT
             cat "$output_file"
-            exit 1
           fi
+        continue-on-error: true
 
-      - name: Comment PR with commitlint results
-        if: |
-          always() &&
-          steps.branch-commits.outputs.has_commits == 'true'
+      - name: Upload commitlint output
+        if: steps.commitlint.outputs.commitlint_status == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: lint-output-commitlint
+          path: commitlint_output.txt
+
+      - name: Fail if commitlint failed
+        if: steps.commitlint.outputs.commitlint_status == 'failure'
+        run: exit 1
+
+  # ============================================================================================================================
+  # Lint Report (single shared PR comment)
+  # ============================================================================================================================
+  # Runs after every lint job, even when some fail (skipped only if the
+  # whole run is cancelled, e.g. superseded by a newer push). Holds the
+  # only `pull-requests: write` grant among the lint jobs.
+  lint_report:
+    name: Lint Report
+    runs-on: ubuntu-latest
+    needs:
+      - ruff
+      - markdownlint
+      - yamllint
+      - prettier
+      - shellcheck
+      - gitleaks
+      - commitlint
+    if: ${{ !cancelled() }}
+    permissions:
+      pull-requests: write
+      actions: read
+    steps:
+      - name: Download lint outputs
+        uses: actions/download-artifact@v7
+        with:
+          pattern: lint-output-*
+          path: lint-outputs
+          merge-multiple: true
+
+      - name: Update shared lint comment
         uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
-            const commentMarker = '<!-- commitlint-report -->';
+            const commentMarker = '<!-- lint-report -->';
 
-            let commitlintOutput = '';
-            const status = '${{ steps.commitlint.outputs.commitlint_status }}';
+            // Markers left behind by the retired per-linter comment steps.
+            // Deleting them migrates PRs opened before the consolidation.
+            const legacyMarkers = [
+              '<!-- ruff-report -->',
+              '<!-- markdownlint-report -->',
+              '<!-- yamllint-report -->',
+              '<!-- prettier-report -->',
+              '<!-- shellcheck-report -->',
+              '<!-- gitleaks-report -->',
+              '<!-- commitlint-report -->',
+            ];
 
-            try {
-              commitlintOutput = fs.readFileSync('commitlint_output.txt', 'utf8');
-              commitlintOutput = commitlintOutput.replace(/\x1b\[[0-9;]*m/g, '');
-            } catch (error) {
-              commitlintOutput = 'No output file generated';
+            const linters = [
+              {
+                name: 'Ruff (Python)',
+                result: '${{ needs.ruff.result }}',
+                file: 'ruff_output.txt',
+                fix: 'Run `uv run ruff check --fix` to auto-fix where possible.',
+              },
+              {
+                name: 'Markdownlint',
+                result: '${{ needs.markdownlint.result }}',
+                file: 'markdownlint_output.txt',
+                fix: 'Run `npx markdownlint-cli2 --fix` to auto-fix issues.',
+              },
+              {
+                name: 'Yamllint',
+                result: '${{ needs.yamllint.result }}',
+                file: 'yamllint_output.txt',
+                fix: 'Run `yamllint -c .yamllint.yml <file>` to check specific files.',
+              },
+              {
+                name: 'Prettier',
+                result: '${{ needs.prettier.result }}',
+                file: 'prettier_output.txt',
+                fix: 'Run `npx prettier --write .` to fix formatting.',
+              },
+              {
+                name: 'Shellcheck',
+                result: '${{ needs.shellcheck.result }}',
+                file: 'shellcheck_output.txt',
+                fix: 'Run `shellcheck <file>` to check specific files.',
+              },
+              {
+                name: 'GitLeaks (Secrets)',
+                result: '${{ needs.gitleaks.result }}',
+                file: 'gitleaks_output.txt',
+                fix: '⚠️ Do not commit secrets, API keys, passwords, or sensitive data.',
+              },
+              {
+                name: 'Commitlint',
+                result: '${{ needs.commitlint.result }}',
+                file: 'commitlint_output.txt',
+                fix: 'Format: `<type>[optional scope]: <description>` — valid types: ' +
+                  'feat, fix, docs, style, refactor, perf, test, chore, ci, build.',
+              },
+            ];
+
+            const failed = linters.filter(l => l.result === 'failure');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existingComment = comments.find(
+              c => c.body.includes(commentMarker)
+            );
+
+            for (const c of comments) {
+              if (legacyMarkers.some(m => c.body.includes(m))) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: c.id,
+                });
+              }
             }
 
-            const commits = fs.readFileSync('branch_commits.txt', 'utf8')
-              .trim().split('\n');
-            const commitCount = commits.length;
+            // All linters green (or nothing relevant changed): no comment.
+            // Remove a stale failure comment from an earlier push.
+            if (failed.length === 0) {
+              if (existingComment) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existingComment.id,
+                });
+              }
+              return;
+            }
 
+            const sha = context.payload.pull_request.head.sha;
             let comment = commentMarker + '\n';
+            comment += `## ❌ Lint failures (${failed.length})\n\n`;
+            comment += `Results for ${sha}. Passing linters are not listed; `;
+            comment += 'this comment updates in place on each push and is ';
+            comment += 'removed once all linters pass.\n\n';
 
-            if (status === 'success') {
-              comment += `## ✅ Commitlint Passed\n\n`;
-              comment += `All ${commitCount} commit message(s) follow conventional commit format.\n`;
-            } else if (status === 'failure') {
-              comment += `## ❌ Commitlint Failed\n\n`;
-              comment += `Some commit messages do not follow conventional commit format.\n\n`;
-              comment += `**Linting output:**\n\n`;
-              comment += '```\n' + commitlintOutput + '\n```\n\n';
-              comment += `Format: \`<type>[optional scope]: <description>\`\n\n`;
-              comment += `Valid types: feat, fix, docs, style, refactor, perf, test, chore, ci, build\n`;
+            for (const l of failed) {
+              comment += `### ${l.name}\n\n`;
+              let output = null;
+              try {
+                output = fs.readFileSync(`lint-outputs/${l.file}`, 'utf8');
+                output = output.replace(/\x1b\[[0-9;]*m/g, '').trim();
+              } catch (error) {
+                output = null;
+              }
+              if (output) {
+                comment += '```\n' + output + '\n```\n\n';
+              } else {
+                comment += '_No lint output was captured — the job failed ';
+                comment += 'before its lint step finished; check the job ';
+                comment += 'log for details._\n\n';
+              }
+              comment += l.fix + '\n\n';
             }
 
             const maxLen = ${{ env.MAX_COMMENT_LENGTH }};
@@ -1025,26 +690,18 @@ jobs:
               comment = comment.substring(0, maxLen - msg.length) + msg;
             }
 
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const existingComment = comments.find(c => c.body.includes(commentMarker));
-
             if (existingComment) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 comment_id: existingComment.id,
-                body: comment
+                body: comment,
               });
             } else {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                body: comment
+                body: comment,
               });
             }
