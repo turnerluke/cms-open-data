@@ -351,6 +351,688 @@ models:
               ge65_total_claims <= total_claims
               or ge65_total_claims is null
 
+  - name: stg_cms__medicare_part_d_prescribers_by_provider
+    description: |
+      Medicare Part D Prescribers — by Provider (CMS data-api/v1
+      dataset `14d8e8a9-7e9b-4370-a044-bf97c46b4b44`). One row per
+      prescriber NPI (1,416,883 rows in the RY26 vintage carrying
+      `DY24`/calendar-2024 data) with Part D claim, fill, day-supply,
+      cost, and beneficiary totals plus brand/generic/other,
+      MAPD/PDP, LIS/non-LIS, opioid, antibiotic and antipsychotic
+      splits, and beneficiary demographics (age, sex, race,
+      dual-eligibility, HCC risk). The bulk CSV covers the latest
+      published data year only and carries no year column, so any
+      prescriber-year grain must take the year from the dataset
+      vintage. CMS drops NPIs with 10 or fewer overall claims from
+      the file entirely, so `total_claims` is never `NULL` or under
+      11 — but every split has its own three-valued suppression flag
+      (`*` / `#` / `NULL`), and `total_beneficiaries` is separately
+      blank-suppressed on 145,511 rows (~10%) without a flag column.
+      Staging renames the abbreviated CMS columns (`Tot_Clms` →
+      `total_claims`, `Bene_Race_Api_Cnt` →
+      `beneficiary_race_asian_pacific_islander_count`, etc.) and
+      zero-pads the NPI to ten-digit text. Grain: `npi`.
+    columns:
+      - name: npi
+        description: |
+          National Provider Identifier of the prescriber (raw
+          `Prscrbr_NPI`), kept as zero-padded ten-digit text.
+          Primary key.
+        data_tests:
+          - not_null
+          - unique
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{10}$'
+      - name: prescriber_last_org_name
+        description: |
+          Prescriber last name, or organization name for
+          organizational NPIs (trimmed `Prscrbr_Last_Org_Name`).
+      - name: prescriber_first_name
+        description: "Prescriber first name; empty strings become `NULL`."
+      - name: prescriber_middle_initial
+        description: "Prescriber middle initial; empty strings become `NULL`."
+      - name: prescriber_credentials
+        description: |
+          Prescriber credentials as reported in NPPES (e.g. `MD`,
+          `NP`, `DO`); empty strings become `NULL`.
+      - name: entity_code
+        description: |
+          `I` for an individual clinician (1,416,881 rows), `O` for
+          an organizational NPI (2 rows).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["I", "O"]
+      - name: state
+        description: |
+          Prescriber state abbreviation (raw `Prscrbr_State_Abrvtn`).
+          Besides the 50 states this includes DC, territories, `XX`
+          (unknown, 33 rows) and `ZZ` (foreign, 155 rows), matching
+          the Part-D prescribers-by-provider-and-drug convention.
+        data_tests:
+          - not_null
+      - name: state_fips
+        description: |
+          Two-digit state FIPS code, kept as a string to preserve
+          leading zeros. Pseudo-codes cover non-state buckets (`72`
+          Puerto Rico — 11,209 rows, the largest — plus `78` Virgin
+          Islands, `66` Guam, `69` Northern Mariana Islands); `NULL`
+          on 1,234 rows for foreign or otherwise unmapped addresses.
+      - name: zip5
+        description: |
+          Five-digit ZIP of the prescriber's practice address, kept
+          as text to preserve leading zeros. `NULL` on 54 rows
+          (foreign or missing addresses).
+      - name: ruca_code
+        description: |
+          Rural-Urban Commuting Area code of the practice ZIP (raw
+          `Prscrbr_RUCA`); decimal subcodes like `4.1` are meaningful,
+          so it stays numeric. `NULL` on 1,234 rows.
+      - name: ruca_description
+        description: "Human-readable RUCA description (trimmed `Prscrbr_RUCA_Desc`)."
+      - name: country
+        description: |
+          Two-letter country code of the practice address; almost
+          always `US` (1,416,728 of 1,416,883 rows). Non-US codes
+          include `CA` (43), `DE` (24), `JP` (19), `AE` (6), plus a
+          long tail.
+        data_tests:
+          - not_null
+      - name: prescriber_type
+        description: |
+          Prescriber specialty (raw `Prscrbr_Type`), sourced from the
+          claims or NPPES per `prescriber_type_source`.
+      - name: prescriber_type_source
+        description: |
+          Where `prescriber_type` came from: `Claim-Specialty` (the
+          specialty appearing on the plurality of the prescriber's
+          claims — 955,364 rows), `NPPES-Specialty` (NPPES-provided
+          specialty when the claim mix is inconclusive — 303,330
+          rows), or `NPPES-Taxonomy` (NPPES taxonomy fallback —
+          158,189 rows).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["Claim-Specialty", "NPPES-Specialty", "NPPES-Taxonomy"]
+      - name: total_claims
+        description: |
+          Part D claims for the prescriber, including refills. Never
+          `NULL` or below 11: CMS drops NPIs with 10 or fewer total
+          claims from the file rather than suppressing in place.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 11
+                inclusive: true
+      - name: total_30day_fills
+        description: |
+          Claims normalized to 30-day-equivalent fills (a 90-day
+          supply counts as 3), so it can exceed `total_claims`.
+        data_tests:
+          - not_null
+      - name: total_drug_cost
+        description: |
+          Total drug cost paid by all parties (plan, beneficiary,
+          government subsidies, third parties) for all Part D
+          claims: ingredient cost, dispensing fee, sales tax, and any
+          vaccine administration fee. In dollars.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_day_supply
+        description: "Total days' supply dispensed across all Part D claims."
+        data_tests:
+          - not_null
+      - name: total_beneficiaries
+        description: |
+          Distinct beneficiaries filled a Part D prescription written
+          by the prescriber. `NULL` on 145,511 rows (~10%) — CMS
+          blank-suppresses counts of 1–10 with no flag column of its
+          own, so `total_beneficiaries is null` is the suppression
+          indicator.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 11
+                inclusive: true
+      - name: ge65_suppression_flag
+        description: |
+          Suppression flag for the GE65 claim/fill/cost/day-supply
+          columns: `*` — the age-65+ claim count is 1–10; `#` — the
+          under-65 complement is 1–10 and would be recalculable from
+          the totals; `NULL` — disclosed (1,081,322 rows disclosed,
+          298,276 counter-suppressed, 37,285 below-threshold).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+      - name: ge65_total_claims
+        description: |
+          Part D claims for beneficiaries aged 65 and over; `NULL` iff
+          `ge65_suppression_flag` is set (335,561 rows null).
+      - name: ge65_total_30day_fills
+        description: "30-day-equivalent fills for beneficiaries aged 65+; `NULL` when suppressed."
+      - name: ge65_total_drug_cost
+        description: "Drug cost for beneficiaries aged 65+, in dollars; `NULL` when suppressed."
+      - name: ge65_total_day_supply
+        description: "Days' supply for beneficiaries aged 65+; `NULL` when suppressed."
+      - name: ge65_beneficiary_suppression_flag
+        description: |
+          Suppression flag for `ge65_total_beneficiaries` with the
+          same `*` / `#` / `NULL` semantics (738,593 disclosed,
+          479,907 counter-suppressed, 198,383 below-threshold).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+      - name: ge65_total_beneficiaries
+        description: |
+          Distinct beneficiaries aged 65+; `NULL` iff
+          `ge65_beneficiary_suppression_flag` is set (678,290 rows
+          null).
+      - name: brand_suppression_flag
+        description: |
+          `*` / `#` / `NULL` suppression flag for the `brand_*`
+          totals (794,605 disclosed, 276,237 counter-suppressed,
+          346,041 below-threshold).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+      - name: brand_total_claims
+        description: |
+          Part D claims for brand-name drugs; `NULL` iff
+          `brand_suppression_flag` is set (622,278 rows null).
+      - name: brand_total_drug_cost
+        description: "Brand-drug cost in dollars; `NULL` when suppressed."
+      - name: generic_suppression_flag
+        description: |
+          `*` / `#` / `NULL` suppression flag for the `generic_*`
+          totals (1,385,580 disclosed, 4,177 counter-suppressed,
+          27,126 below-threshold).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+      - name: generic_total_claims
+        description: |
+          Part D claims for generic drugs; `NULL` iff
+          `generic_suppression_flag` is set (31,303 rows null).
+      - name: generic_total_drug_cost
+        description: "Generic-drug cost in dollars; `NULL` when suppressed."
+      - name: other_suppression_flag
+        description: |
+          `*` / `#` / `NULL` suppression flag for the `other_*`
+          totals — drugs not classified as brand or generic
+          (794,807 disclosed, 293,190 counter-suppressed, 328,886
+          below-threshold).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+      - name: other_total_claims
+        description: "Part D claims for other drugs; `NULL` when suppressed."
+      - name: other_total_drug_cost
+        description: "Other-drug cost in dollars; `NULL` when suppressed."
+      - name: mapd_suppression_flag
+        description: |
+          `*` / `#` / `NULL` suppression flag for the `mapd_*` totals
+          — claims in Medicare-Advantage-Part-D plans (1,185,785
+          disclosed, 118,404 counter-suppressed, 112,694
+          below-threshold).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+      - name: mapd_total_claims
+        description: "MAPD claims; `NULL` when suppressed."
+      - name: mapd_total_drug_cost
+        description: "MAPD drug cost in dollars; `NULL` when suppressed."
+      - name: pdp_suppression_flag
+        description: |
+          `*` / `#` / `NULL` suppression flag for the `pdp_*` totals
+          — claims in stand-alone Prescription-Drug-Plan coverage
+          (1,185,785 disclosed, 69,773 counter-suppressed, 161,325
+          below-threshold).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+      - name: pdp_total_claims
+        description: "PDP claims; `NULL` when suppressed."
+      - name: pdp_total_drug_cost
+        description: "PDP drug cost in dollars; `NULL` when suppressed."
+      - name: lis_suppression_flag
+        description: |
+          `*` / `#` / `NULL` suppression flag for the `lis_*` totals
+          — beneficiaries receiving the Part D Low-Income Subsidy
+          (1,139,702 disclosed, 62,958 counter-suppressed, 214,223
+          below-threshold).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+      - name: lis_total_claims
+        description: "LIS claims; `NULL` when suppressed."
+      - name: lis_total_drug_cost
+        description: |
+          LIS drug cost in dollars (raw `LIS_Drug_Cst`); `NULL` when
+          suppressed.
+      - name: nonlis_suppression_flag
+        description: |
+          `*` / `#` / `NULL` suppression flag for the `nonlis_*`
+          totals (1,139,702 disclosed, 182,757 counter-suppressed,
+          94,424 below-threshold).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+      - name: nonlis_total_claims
+        description: "Non-LIS claims; `NULL` when suppressed."
+      - name: nonlis_total_drug_cost
+        description: |
+          Non-LIS drug cost in dollars (raw `NonLIS_Drug_Cst`);
+          `NULL` when suppressed.
+      - name: opioid_total_claims
+        description: |
+          Part D claims for opioid drugs (any). Unlike the splits
+          above, opioid totals ship without a named suppression flag
+          — the measure columns are `NULL` directly (350,416 rows
+          null, ~25%) when CMS suppresses.
+      - name: opioid_total_drug_cost
+        description: "Opioid drug cost in dollars; `NULL` when suppressed."
+      - name: opioid_total_day_supply
+        description: "Days' supply of opioid drugs; `NULL` when suppressed."
+      - name: opioid_total_beneficiaries
+        description: |
+          Distinct beneficiaries receiving opioid drugs. Suppressed
+          independently on 536,159 rows (~38%).
+      - name: opioid_prescriber_rate
+        description: |
+          Opioid claims as a percentage of the prescriber's total
+          claims (raw `Opioid_Prscrbr_Rate`). Null-paired 1:1 with
+          `opioid_total_claims`.
+      - name: opioid_la_total_claims
+        description: |
+          Part D claims for long-acting opioid drugs; `NULL` on
+          439,045 rows (~31%) when suppressed or when the
+          prescriber has no long-acting opioid claims.
+      - name: opioid_la_total_drug_cost
+        description: "Long-acting opioid drug cost; `NULL` when suppressed."
+      - name: opioid_la_total_day_supply
+        description: "Long-acting opioid days' supply; `NULL` when suppressed."
+      - name: opioid_la_total_beneficiaries
+        description: |
+          Distinct beneficiaries receiving long-acting opioids;
+          `NULL` on 657,201 rows (~46%).
+      - name: opioid_la_prescriber_rate
+        description: |
+          Long-acting-opioid claims as a percentage of the
+          prescriber's opioid claims. `NULL` on 1,047,045 rows
+          (~74%), further suppressed than the other long-acting
+          columns because the ratio is undefined when opioid claims
+          are themselves suppressed.
+      - name: antibiotic_total_claims
+        description: |
+          Part D claims for antibiotic drugs; `NULL` on 399,092 rows
+          (~28%) when suppressed.
+      - name: antibiotic_total_drug_cost
+        description: "Antibiotic drug cost; `NULL` when suppressed."
+      - name: antibiotic_total_beneficiaries
+        description: |
+          Distinct beneficiaries receiving antibiotics; `NULL` on
+          531,719 rows (~38%).
+      - name: antipsychotic_ge65_suppression_flag
+        description: |
+          `*` / `NULL` suppression flag for the age-65+ antipsychotic
+          claim and cost columns; unlike the other splits, no `#`
+          counter-suppression is ever emitted (878,257 disclosed,
+          538,626 below-threshold).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*"]
+      - name: antipsychotic_ge65_total_claims
+        description: |
+          Age-65+ antipsychotic claims; `NULL` iff
+          `antipsychotic_ge65_suppression_flag` is set.
+      - name: antipsychotic_ge65_total_drug_cost
+        description: "Age-65+ antipsychotic drug cost; `NULL` when suppressed."
+      - name: antipsychotic_ge65_beneficiary_suppression_flag
+        description: |
+          `*` / `NULL` suppression flag for
+          `antipsychotic_ge65_total_beneficiaries` (502,197
+          disclosed, 914,686 below-threshold). NB the raw CMS column
+          is misspelled `Antpsyct_GE65_Bene_Suprsn_Flag`.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*"]
+      - name: antipsychotic_ge65_total_beneficiaries
+        description: |
+          Distinct age-65+ beneficiaries receiving antipsychotics;
+          `NULL` iff
+          `antipsychotic_ge65_beneficiary_suppression_flag` is set.
+      - name: avg_beneficiary_age
+        description: "Average beneficiary age. Never `NULL`."
+        data_tests:
+          - not_null
+      - name: beneficiary_age_lt_65_count
+        description: "Beneficiaries under 65; `NULL` when suppressed (~48%)."
+      - name: beneficiary_age_65_74_count
+        description: "Beneficiaries 65–74; `NULL` when suppressed (~51%)."
+      - name: beneficiary_age_75_84_count
+        description: "Beneficiaries 75–84; `NULL` when suppressed (~68%)."
+      - name: beneficiary_age_gt_84_count
+        description: "Beneficiaries over 84; `NULL` when suppressed (~68%)."
+      - name: beneficiary_female_count
+        description: |
+          Female beneficiaries. Paired-null 1:1 with
+          `beneficiary_male_count` (both null on 373,430 rows, both
+          populated on 1,043,453 rows).
+      - name: beneficiary_male_count
+        description: "Male beneficiaries; paired-null with `beneficiary_female_count`."
+      - name: beneficiary_race_white_count
+        description: "White beneficiaries; suppressed when below CMS threshold (~19%)."
+      - name: beneficiary_race_black_count
+        description: "Black beneficiaries; suppressed when below threshold (~57%)."
+      - name: beneficiary_race_asian_pacific_islander_count
+        description: "Asian/Pacific Islander beneficiaries; suppressed when below threshold (~62%)."
+      - name: beneficiary_race_hispanic_count
+        description: "Hispanic beneficiaries; suppressed when below threshold (~59%)."
+      - name: beneficiary_race_native_american_count
+        description: "Native American beneficiaries; suppressed when below threshold (~29%)."
+      - name: beneficiary_race_other_count
+        description: "Other-race beneficiaries; suppressed when below threshold (~70%)."
+      - name: beneficiary_dual_count
+        description: |
+          Dual-eligible (Medicare + Medicaid) beneficiaries.
+          Paired-null 1:1 with `beneficiary_nondual_count`.
+      - name: beneficiary_nondual_count
+        description: "Non-dual beneficiaries; paired-null with `beneficiary_dual_count`."
+      - name: avg_hcc_risk_score
+        description: |
+          Average CMS-HCC risk score of the prescriber's Part D
+          beneficiaries (raw `Bene_Avg_Risk_Scre`). `NULL` on 1 row.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              ge65_total_claims <= total_claims
+              or ge65_total_claims is null
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicare_part_d_prescribers_by_provider__ge65_flag_paired
+          arguments:
+            expression: |
+              (ge65_suppression_flag is not null) = (ge65_total_claims is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicare_part_d_prescribers_by_provider__ge65_bene_flag_paired
+          arguments:
+            expression: |
+              (ge65_beneficiary_suppression_flag is not null) = (ge65_total_beneficiaries is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicare_part_d_prescribers_by_provider__brand_flag_paired
+          arguments:
+            expression: |
+              (brand_suppression_flag is not null) = (brand_total_claims is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicare_part_d_prescribers_by_provider__generic_flag_paired
+          arguments:
+            expression: |
+              (generic_suppression_flag is not null) = (generic_total_claims is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicare_part_d_prescribers_by_provider__other_flag_paired
+          arguments:
+            expression: |
+              (other_suppression_flag is not null) = (other_total_claims is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicare_part_d_prescribers_by_provider__mapd_flag_paired
+          arguments:
+            expression: |
+              (mapd_suppression_flag is not null) = (mapd_total_claims is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicare_part_d_prescribers_by_provider__pdp_flag_paired
+          arguments:
+            expression: |
+              (pdp_suppression_flag is not null) = (pdp_total_claims is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicare_part_d_prescribers_by_provider__lis_flag_paired
+          arguments:
+            expression: |
+              (lis_suppression_flag is not null) = (lis_total_claims is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicare_part_d_prescribers_by_provider__nonlis_flag_paired
+          arguments:
+            expression: |
+              (nonlis_suppression_flag is not null) = (nonlis_total_claims is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicare_part_d_prescribers_by_provider__antipsychotic_ge65_flag_paired
+          arguments:
+            expression: |
+              (antipsychotic_ge65_suppression_flag is not null) = (antipsychotic_ge65_total_claims is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicare_part_d_prescribers_by_provider__antipsychotic_ge65_bene_flag_paired
+          arguments:
+            expression: |
+              (antipsychotic_ge65_beneficiary_suppression_flag is not null) = (antipsychotic_ge65_total_beneficiaries is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicare_part_d_prescribers_by_provider__mf_paired_null
+          arguments:
+            expression: |
+              (beneficiary_female_count is null) = (beneficiary_male_count is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicare_part_d_prescribers_by_provider__dual_paired_null
+          arguments:
+            expression: |
+              (beneficiary_dual_count is null) = (beneficiary_nondual_count is null)
+
+  - name: stg_cms__medicare_part_d_prescribers_by_geography_and_drug
+    description: |
+      Medicare Part D Prescribers — by Geography and Drug (CMS
+      data-api/v1 dataset `c8ea3f8e-3a09-4fea-86f2-8902fb4b0920`).
+      One row per geography-level × geography × brand-name × generic-
+      name (117,661 rows in the RY26 vintage carrying `DY24`/
+      calendar-2024 data) with Part D claim, fill, cost, and
+      beneficiary totals across all prescribers rolling up to the
+      cell. Two geography levels coexist: `National` (3,632 rows,
+      one per drug, `geography_code` always `NULL`) and `State`
+      (114,029 rows across 60 codes — 50 states + DC + PR + VI + GU
+      + MP + AS + armed-forces / foreign / unknown pseudo-codes
+      `9A`–`9E`). Consumers must filter on `geography_level` to
+      avoid double-counting National totals with the State roll-ups.
+      The bulk CSV covers the latest published data year only and
+      carries no year column, so any geography-drug-year grain must
+      take the year from the dataset vintage. CMS blank-suppresses
+      `total_beneficiaries` on 21,951 rows (~19%) and applies the
+      three-valued `*` / `#` / `NULL` scheme to the two age-65+
+      suppression flags. Staging renames the abbreviated CMS columns
+      (`Tot_Clms` → `total_claims`, `Prscrbr_Geo_Lvl` →
+      `geography_level`, etc.) and casts the `Y`/`N` drug-class flags
+      to booleans. Grain: (`geography_level`, `geography_code`,
+      `brand_name`, `generic_name`) — note `geography_code` is
+      `NULL` for all National rows (and for one edge-case State row
+      in the current vintage), so the composite is unique by
+      construction (verified: 0 dupes).
+    columns:
+      - name: geography_level
+        description: |
+          `National` (3,632 rows) or `State` (114,029 rows).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["National", "State"]
+      - name: geography_code
+        description: |
+          Two-character geography code (raw `Prscrbr_Geo_Cd`). Always
+          `NULL` for National rows; for State rows it is the two-
+          digit state FIPS (`01`–`56`) or a two-character pseudo-code
+          (`66` Guam, `69` Northern Mariana Islands, `72` Puerto
+          Rico, `78` Virgin Islands, `9A` Armed Forces Central/South
+          America, `9B` Armed Forces Europe, `9C` Armed Forces
+          Pacific, `9D` Unknown, `9E` Foreign Country). One State
+          row currently ships with `NULL` code (Trazodone Hcl).
+      - name: geography_description
+        description: |
+          Human-readable geography name (raw `Prscrbr_Geo_Desc`), e.g.
+          `New York`, `Armed Forces Europe`, or `National`. Same
+          Trazodone Hcl State row ships with a `NULL` description.
+      - name: brand_name
+        description: |
+          Drug brand name as marketed, or the generic name again for
+          generics (trimmed `Brnd_Name`). Never `NULL`. Grain column
+          with `geography_level`, `geography_code`, `generic_name`.
+        data_tests:
+          - not_null
+      - name: generic_name
+        description: |
+          Drug generic (chemical) name (trimmed `Gnrc_Name`). Never
+          `NULL`.
+        data_tests:
+          - not_null
+      - name: total_prescribers
+        description: |
+          Distinct prescribers writing Part D prescriptions for the
+          brand/generic drug in the geography. Never `NULL`.
+        data_tests:
+          - not_null
+      - name: total_claims
+        description: |
+          Part D claims for the drug in the geography, including
+          refills. Never `NULL`.
+        data_tests:
+          - not_null
+      - name: total_30day_fills
+        description: "Claims normalized to 30-day-equivalent fills. Never `NULL`."
+        data_tests:
+          - not_null
+      - name: total_drug_cost
+        description: |
+          Total drug cost paid by all parties (plan, beneficiary,
+          government subsidies, third parties). In dollars. Never
+          `NULL`.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_beneficiaries
+        description: |
+          Distinct beneficiaries filling the drug in the geography.
+          `NULL` on 21,951 rows (~19%) — CMS blank-suppresses counts
+          of 1–10 with no flag column, so `total_beneficiaries is
+          null` is the suppression indicator.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 11
+                inclusive: true
+      - name: ge65_suppression_flag
+        description: |
+          Three-valued suppression flag for the GE65 claim/fill/cost
+          columns: `*` — the age-65+ claim count is 1–10 (6,463
+          rows); `#` — counter-suppressed because the under-65
+          complement is 1–10 (15,259 rows); `NULL` — disclosed
+          (95,939 rows).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+      - name: ge65_total_claims
+        description: |
+          Part D claims for beneficiaries aged 65+; `NULL` iff
+          `ge65_suppression_flag` is set (21,722 rows null).
+      - name: ge65_total_30day_fills
+        description: "30-day-equivalent fills for beneficiaries aged 65+; `NULL` when suppressed."
+      - name: ge65_total_drug_cost
+        description: "Drug cost for beneficiaries aged 65+, in dollars; `NULL` when suppressed."
+      - name: ge65_beneficiary_suppression_flag
+        description: |
+          Suppression flag for `ge65_total_beneficiaries` with the
+          same `*` / `#` / `NULL` semantics (67,619 disclosed,
+          24,174 counter-suppressed, 25,868 below-threshold).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["*", "#"]
+      - name: ge65_total_beneficiaries
+        description: |
+          Distinct beneficiaries aged 65+; `NULL` iff
+          `ge65_beneficiary_suppression_flag` is set (50,042 rows
+          null).
+      - name: lis_beneficiary_cost_share
+        description: |
+          Average beneficiary cost-share for LIS beneficiaries, in
+          dollars (raw `LIS_Bene_Cst_Shr`). Never `NULL`.
+        data_tests:
+          - not_null
+      - name: nonlis_beneficiary_cost_share
+        description: |
+          Average beneficiary cost-share for non-LIS beneficiaries,
+          in dollars (raw `NonLIS_Bene_Cst_Shr`). Never `NULL`.
+        data_tests:
+          - not_null
+      - name: is_opioid
+        description: |
+          `TRUE` if the drug is classified as an opioid (raw
+          `Opioid_Drug_Flag = 'Y'`), `FALSE` otherwise. 1,874 rows
+          `TRUE`.
+        data_tests:
+          - not_null
+      - name: is_long_acting_opioid
+        description: |
+          `TRUE` for long-acting opioids (raw `Opioid_LA_Drug_Flag =
+          'Y'`). 842 rows `TRUE`.
+        data_tests:
+          - not_null
+      - name: is_antibiotic
+        description: |
+          `TRUE` for antibiotics (raw `Antbtc_Drug_Flag = 'Y'`).
+          4,617 rows `TRUE`.
+        data_tests:
+          - not_null
+      - name: is_antipsychotic
+        description: |
+          `TRUE` for antipsychotics (raw `Antpsyct_Drug_Flag = 'Y'`).
+          2,978 rows `TRUE`.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - geography_level
+              - geography_code
+              - brand_name
+              - generic_name
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              ge65_total_claims <= total_claims
+              or ge65_total_claims is null
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicare_part_d_prescribers_by_geography_and_drug__ge65_flag_paired
+          arguments:
+            expression: |
+              (ge65_suppression_flag is not null) = (ge65_total_claims is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicare_part_d_prescribers_by_geography_and_drug__ge65_bene_flag_paired
+          arguments:
+            expression: |
+              (ge65_beneficiary_suppression_flag is not null) = (ge65_total_beneficiaries is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicare_part_d_prescribers_by_geography_and_drug__national_geo_code_null
+          arguments:
+            expression: |
+              geography_level != 'National' or geography_code is null
+
   - name: stg_cms__medicare_inpatient_hospitals_by_provider
     description: |
       Medicare Inpatient Hospitals — by Provider (CMS data-api/v1
