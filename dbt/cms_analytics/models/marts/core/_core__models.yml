@@ -1140,3 +1140,252 @@ models:
               - npi
               - individual_pac_id
               - facility_ccn
+
+  - name: dim_qhp_plan
+    description: |
+      One row per certified Qualified Health Plan (QHP) on the
+      federally-facilitated marketplace, conformed from the union of
+      the four `stg_cms__qhp_landscape_*_2026` staging models
+      (individual + SHOP × medical + dental). Grain: `plan_id`
+      (Standard Component 14-character HIOS identifier). Verified
+      unique across all four files in the PY2026 vintage — 4,856
+      distinct plans, each appearing in exactly one file, so there is
+      no cross-file `plan_id` collision to resolve.
+
+      The staging layer's grain is `plan_id × fips_county_code` — most
+      attributes on this dim are constant within `plan_id` across
+      counties, and every candidate column carried here was verified
+      constant per `plan_id` in the current vintage (max distinct value
+      per plan = 1, zero collisions). Because the collapse is trivial,
+      the model uses `any_value` without a deterministic tie-break
+      (matching the `dim_clinician` precedent). Note the `unique` test
+      on `plan_id` guards the grain only — if a future vintage
+      introduces per-plan attribute collisions, `any_value` would pick
+      arbitrarily without failing a test; re-verify attribute constancy
+      when the vintage changes.
+
+      County-varying attributes — `rating_area`, the 37 premium-
+      scenario columns, and every cost-sharing (deductible / MOOP /
+      copay) column — are intentionally excluded from this dim; they
+      belong on plan-county-grain facts.
+
+      Coverage: the FFM QHP files span 30 states — the FFM states plus
+      the state-partnership exchanges that use the federal platform.
+      State-based marketplaces (CA, NY, WA, etc.) publish their own
+      plan landscapes and are not on data.healthcare.gov, so this dim
+      is not a national plan catalogue.
+
+      `standardized_plan_option`, `ehb_percent_of_total_premium`, and
+      `drug_benefits_integrated_standard` are only populated on the
+      individual-medical file (with `drug_benefits_integrated_standard`
+      additionally populated on SHOP medical); dental and SHOP-dental
+      rows carry NULL for those columns by construction.
+    columns:
+      - name: plan_id
+        description: |
+          14-character HIOS Standard Component ID (e.g.
+          `72287AL0010001`). Primary key — one row per plan.
+        data_tests:
+          - not_null
+          - unique
+      - name: plan_year
+        description: |
+          Calendar plan year — `2026` for every row in this vintage
+          (the four source files are all PY2026).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [2026]
+      - name: market
+        description: |
+          `individual` (Individual market — 4,696 plans) or `shop`
+          (Small Business Health Options Program — 160 plans).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - individual
+                  - shop
+      - name: product
+        description: |
+          `medical` (4,202 plans) or `dental` (654 plans, stand-alone
+          dental plans).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - medical
+                  - dental
+      - name: hios_issuer_id
+        description: |
+          Five-digit HIOS issuer identifier (e.g. `72287`) — the
+          insurance carrier that offers the plan. 346 distinct issuers
+          across the four PY2026 files.
+        data_tests:
+          - not_null
+      - name: issuer_name
+        description: "Insurance-carrier name."
+        data_tests:
+          - not_null
+      - name: plan_marketing_name
+        description: |
+          Consumer-facing marketing name for the plan (e.g.
+          `Blue Cross Blue Shield Gold PPO`).
+      - name: metal_level
+        description: |
+          Medical metal tier (`Bronze`, `Expanded Bronze`, `Silver`,
+          `Gold`, `Platinum`, `Catastrophic`) or stand-alone-dental
+          tier (`High`, `Low`). PY2026 distribution: Silver 1,528,
+          Gold 1,217, Expanded Bronze 1,180, Low 414, High 240,
+          Bronze 149, Catastrophic 75, Platinum 53.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Bronze
+                  - Expanded Bronze
+                  - Silver
+                  - Gold
+                  - Platinum
+                  - Catastrophic
+                  - High
+                  - Low
+      - name: plan_type
+        description: |
+          Network structure (e.g. `HMO`, `PPO`, `EPO`, `POS`,
+          `Indemnity`).
+      - name: child_only_offering
+        description: |
+          `Allows Adult and Child-Only` (~98% of plans) or
+          `Allows Child-Only` (~2%). No plan in this vintage is
+          child-only exclusive.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - Allows Adult and Child-Only
+                  - Allows Child-Only
+      - name: source_system
+        description: |
+          Provenance of the plan certification: `HIOS` (~70%) or
+          `SERFF` (~30%) — the CMS system the issuer used to file
+          this plan. A carrier attribute, not a data-quality flag.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["HIOS", "SERFF"]
+      - name: standardized_plan_option
+        description: |
+          CMS standardized-plan-option designation
+          (`Design 1`, `Design 2`, `Design 3`, or `Not Applicable`)
+          — a plan-design classifier that only appears on individual-
+          medical files. `NULL` for dental and SHOP plans (the source
+          files don't carry the column).
+      - name: ehb_percent_of_total_premium
+        description: |
+          Essential Health Benefits share of the premium as a
+          percent-scale decimal (94.69–100.00 in this vintage — used
+          for premium-tax-credit calculations). Populated on
+          individual-medical plans; `NULL` for dental, SHOP, and
+          SHOP-dental rows (the source files don't carry the column).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 100
+                inclusive: true
+      - name: drug_benefits_integrated_standard
+        description: |
+          `TRUE` when the plan's drug MOOP under the Standard cost-
+          sharing variant is the sentinel `Included in Medical` (drug
+          spend accrues to the medical MOOP rather than a separate
+          pharmacy accumulator) — a real product-design signal, not
+          a data-quality artifact. Populated on individual-medical
+          and SHOP-medical plans; `NULL` for dental plans (no drug
+          block). Sourced from the individual-MOOP column since it's
+          100% populated with the sentinel across drug-integrated
+          rows on both medical files, unlike the drug-deductible
+          column which disagrees on ~11–28% of rows. See the two
+          medical staging models for the vintage breakdown.
+      - name: network_url
+        description: "Issuer network / provider-directory URL."
+      - name: plan_brochure_url
+        description: "URL to the plan's SBC / marketing brochure."
+      - name: summary_of_benefits_url
+        description: "URL to the plan's Summary of Benefits and Coverage."
+      - name: drug_formulary_url
+        description: |
+          URL to the plan's drug formulary. Populated on medical
+          plans; `NULL` on dental plans (no drug coverage).
+      - name: customer_service_phone_local
+        description: "Issuer customer-service local phone number."
+      - name: customer_service_phone_toll_free
+        description: "Issuer customer-service toll-free phone number."
+      - name: customer_service_phone_tty
+        description: "Issuer customer-service TTY phone number."
+      - name: as_of
+        description: |
+          Snapshot vintage: `max(modified)` across the four QHP
+          dataset keys in `stg_cms__dataset_vintages`. The four files
+          publish independent modified dates (2026-08-10 for three,
+          2026-08-26 for individual medical in the current vintage);
+          taking the max means any single-file refresh bumps the
+          dim's `as_of` forward. Constant across rows.
+        data_tests:
+          - not_null
+
+  - name: dim_county
+    description: |
+      One row per US county appearing on any of the four
+      `stg_cms__qhp_landscape_*_2026` staging models. Grain:
+      `fips_county_code` (5-digit FIPS county code, stored as text to
+      preserve leading zeros). 2,055 distinct counties in the PY2026
+      vintage, all in the 30 FFM / partnership-exchange states — this
+      dim is scoped to the marketplace-verticals footprint, **not** a
+      national county reference. State-based exchanges (CA, NY, WA,
+      etc.) don't publish plans through data.healthcare.gov and have
+      no rows here; a future PR will extend or replace this dim if
+      other CMS datasets need broader county coverage.
+
+      `state_code` and `county_name` were verified constant per FIPS
+      across all four files (zero collisions in the current vintage),
+      so `any_value` collapses deterministically without a tie-break.
+    columns:
+      - name: fips_county_code
+        description: |
+          5-digit FIPS county code (state FIPS 2-digit prefix +
+          3-digit county code). Primary key — one row per county.
+          Stored as text to preserve leading zeros (e.g. `01001`).
+        data_tests:
+          - not_null
+          - unique
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{5}$'
+      - name: state_code
+        description: |
+          Two-letter state or territory abbreviation (e.g. `AL`,
+          `TX`). Covers the 30 states on the federally-facilitated
+          marketplace in PY2026 — AK, AL, AR, AZ, DE, FL, HI, IA,
+          IN, KS, LA, MI, MO, MS, MT, NC, ND, NE, NH, OH, OK, OR,
+          SC, SD, TN, TX, UT, WI, WV, WY.
+        data_tests:
+          - not_null
+      - name: county_name
+        description: |
+          County name as CMS ships it on the QHP files (e.g.
+          `Autauga`, `Los Angeles`). Trimmed at staging.
+        data_tests:
+          - not_null
+      - name: as_of
+        description: |
+          Snapshot vintage: `max(modified)` across the four QHP
+          dataset keys in `stg_cms__dataset_vintages` — same rule as
+          `dim_qhp_plan.as_of`. Constant across rows.
+        data_tests:
+          - not_null
