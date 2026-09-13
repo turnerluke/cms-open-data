@@ -2800,3 +2800,506 @@ models:
             expression: "drug_benefits_integrated is not null"
           config:
             where: "product = 'medical'"
+
+  - name: fct_hcpcs_service
+    description: |
+      Medicare Physician & Other Practitioners service-level rollup at
+      the (`hcpcs_code`, `place_of_service`) grain — one row per HCPCS
+      procedure code and place of service. 13,463 rows in the
+      2026-05-21 snapshot (9,403 distinct HCPCS codes; 4,060 codes
+      appear in both facility and office place-of-service, 2,984 in
+      facility only, 2,359 in office only).
+
+      Modeling choices to be aware of:
+
+      - **Derived from the National rows** of
+        `stg_cms__medicare_physician_by_geography_and_service` rather
+        than aggregating the 9,781,673-row by-provider-and-service
+        file. The two disagree because CMS drops (npi, hcpcs, pos)
+        cells with 10 or fewer beneficiaries from the provider file
+        outright (dropped, not suppressed in place). The gap is
+        material: summing `total_services` across the provider file
+        recovers 2,756,663,769 of the National-row total
+        3,554,240,899 — 77.6%. **22.4% of program-wide service
+        volume lives entirely in the sub-11 suppression tail and is
+        addressable only from the National rollup**, so this mart
+        uses National as the authoritative source. The provider file
+        remains the right source for provider-level analyses; this
+        mart is the right source for service-level totals.
+      - `hcpcs_drug_indicator` is 1:1 with `hcpcs_code` across the
+        F/O National rows (0 codes carry >1 indicator). Same for
+        `hcpcs_description`. 699 distinct HCPCS codes are Part-B drug
+        administrations (814 rows across F/O); 8,704 are medical
+        services (12,649 rows).
+      - **No `avg_submitted_charge` censoring at this grain.** The
+        $99,999.99 cap on the provider file is a per-provider
+        reporting-file artifact (18 provider rows hit it out of
+        9.78M); the National aggregate max is $78,725.07 in the
+        current vintage.
+      - **No foreign keys.** No HCPCS dimension exists yet in the
+        warehouse, and the mart's own (`hcpcs_code`,
+        `place_of_service`) grain plus `hcpcs_description` /
+        `hcpcs_drug_indicator` covers at-a-glance lookups. `dim_date`
+        is not applied to `as_of` (same choice as `fct_drug_geography`
+        and the other snapshot-vintage marts).
+    columns:
+      - name: hcpcs_code
+        description: |
+          Five-character HCPCS Level I (CPT) or Level II code. Grain
+          column. Always exactly five characters; never null.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_value_lengths_to_equal:
+              arguments:
+                value: 5
+      - name: place_of_service
+        description: |
+          `F` facility (7,044 rows) or `O` office / non-facility
+          (6,419). Grain column. Never null.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["F", "O"]
+      - name: hcpcs_description
+        description: |
+          Long descriptor for the HCPCS code. 1:1 with `hcpcs_code`
+          in the current vintage (0 codes carry >1 description).
+          Never null.
+        data_tests:
+          - not_null
+      - name: hcpcs_drug_indicator
+        description: |
+          `Y` Part-B drug administration (814 rows across 699
+          distinct codes), `N` medical service (12,649 rows across
+          8,704 codes). 1:1 with `hcpcs_code`. Never null.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Y", "N"]
+      - name: total_rendering_providers
+        description: |
+          Distinct rendering NPIs billing this HCPCS × place-of-service
+          nationally. Never null; empirical range 1–641,674 in the
+          current vintage.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: total_beneficiaries
+        description: |
+          Distinct Medicare beneficiaries served nationally for the
+          HCPCS × place-of-service. Never null and never below 11 (CMS
+          drops smaller cells from the file). Empirical range
+          11–21,005,950; program-wide sum 702,429,848 (counts a
+          beneficiary once per service line she received).
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 11
+                inclusive: true
+      - name: total_services
+        description: |
+          National total Medicare services billed for the HCPCS ×
+          place-of-service. Never null; empirical min 11.0, max
+          98,923,627.2 (A0425 ambulance mileage, facility); sum
+          3,554,240,899.5 across the mart.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_beneficiary_day_services
+        description: |
+          Distinct beneficiary-days on which the service was rendered
+          nationally. Bounded above by `total_services`. Never null.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: avg_submitted_charge
+        description: |
+          National provider-population average submitted charge per
+          service, in dollars. Not right-censored at this grain
+          (empirical range $0.01–$78,725.07). Never null.
+        data_tests:
+          - not_null
+      - name: avg_medicare_allowed_amount
+        description: |
+          National average Medicare-allowed amount per service
+          (payment plus beneficiary cost-share), in dollars. Never
+          null.
+        data_tests:
+          - not_null
+      - name: avg_medicare_payment_amount
+        description: |
+          National average dollars Medicare paid per service. Never
+          null. Always at most `avg_medicare_allowed_amount` at this
+          grain (enforced upstream via the model-level
+          `dbt_utils.expression_is_true` test on the staging file).
+        data_tests:
+          - not_null
+      - name: avg_medicare_standardized_amount
+        description: |
+          National average payment per service normalised to remove
+          regional geographic-adjustment differences. Never null.
+        data_tests:
+          - not_null
+      - name: payment_to_charge_ratio
+        description: |
+          `avg_medicare_payment_amount / avg_submitted_charge` — the
+          share of the provider's submitted charge that Medicare
+          actually pays, averaged across services. Never null (both
+          inputs non-null); empirical range 0.00007–1.0 at the
+          National grain (never exceeds 1.0 here; state-level
+          anomalies exist and are documented on
+          `fct_physician_service_geography`). Median 0.169 across the
+          13,463 rows.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+      - name: allowed_to_charge_ratio
+        description: |
+          `avg_medicare_allowed_amount / avg_submitted_charge` —
+          share of the submitted charge Medicare recognises as
+          allowed (before applying the beneficiary cost-share split).
+          Never null; empirical range 0.00007–1.0 at the National
+          grain.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+      - name: payment_to_allowed_ratio
+        description: |
+          `avg_medicare_payment_amount / avg_medicare_allowed_amount`
+          — the payment / allowed split, which reflects the
+          beneficiary cost-share pattern (deductible / coinsurance).
+          Never null; empirical range 0.42–1.0 at the National
+          grain.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+      - name: beneficiaries_per_provider
+        description: |
+          `total_beneficiaries / total_rendering_providers` — average
+          beneficiaries per NPI at this service. High values indicate
+          highly concentrated services (e.g. lab drops, radiology
+          benchmarks); low values indicate one-provider-per-patient
+          services. Never null; empirical range 0.19–44,640.6.
+        data_tests:
+          - not_null
+      - name: services_per_beneficiary
+        description: |
+          `total_services / total_beneficiaries` — average services
+          rendered per beneficiary at this service (utilization
+          intensity). Never null; empirical range 1.0–429,962.4.
+        data_tests:
+          - not_null
+      - name: as_of
+        description: |
+          Snapshot vintage: the upstream `modified` date CMS reported
+          for the by-geography-and-service file at capture time (from
+          `stg_cms__dataset_vintages`). Constant across rows;
+          2026-05-21 in the current vintage.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - hcpcs_code
+              - place_of_service
+
+  - name: fct_physician_service_geography
+    description: |
+      Medicare Physician & Other Practitioners geography benchmark
+      for HCPCS services from
+      `stg_cms__medicare_physician_by_geography_and_service`.
+      Grain: (`geography_level`, `geography_code`, `hcpcs_code`,
+      `place_of_service`) — 268,350 rows in the 2026-05-21 snapshot
+      (13,463 National + 254,887 State), verified unique. Every
+      state row carries its corresponding national values inline in
+      `national_*` benchmark columns so cross-state comparisons are
+      a single-table lookup.
+
+      Modeling choices to be aware of:
+
+      - **National vs State levels are both kept**, distinguished by
+        `geography_level`. National rows (13,463; one per (HCPCS,
+        pos)) are the CMS-published all-USA rollup and are also
+        exposed at HCPCS grain as `fct_hcpcs_service`. State rows
+        (254,887) are the state-level detail. Summing `total_services`
+        across the whole fact double-counts — filter on
+        `geography_level` when aggregating. Summing state rows also
+        under-counts national utilisation (miss ~22.4% of national
+        volume that lives in sub-11 suppressed cells, per
+        `fct_hcpcs_service` description).
+      - **Every state row carries its national benchmark inline**
+        via `national_*` columns joined on (`hcpcs_code`,
+        `place_of_service`). Zero orphans in the current vintage —
+        every state (HCPCS × pos) pair has a matching National row.
+        National rows themselves carry NULL in every `national_*`
+        column; their own values live in the plain metric columns.
+      - **`share_of_national_*` columns are inclusive at the state
+        level.** Empirical range 4.4e-7–1.0; sums by (HCPCS, pos)
+        across states are always ≤ 1 (156 cells where the sum
+        equals 1 exactly — single-state HCPCS with no suppression
+        elsewhere — and 254,731 where it is below 1, reflecting the
+        national-only sub-11 tail).
+      - **Five state rows carry NULL `geography_code`** in the
+        current vintage (all E&M / psychotherapy codes CMS emitted
+        as state-level aggregates without identifying the state:
+        90833/F, 99223/F, 99232/F, 99233/F, 99239/F). All five have
+        matching National rows so their `national_*` benchmarks
+        populate; only the `share_of_national_*` values themselves
+        anchor them to a phantom state bucket. The
+        `unique_combination_of_columns` grain test is NULL-safe on
+        those rows.
+      - **Pseudo-codes and territories flow through as ordinary
+        states.** Territory codes 60 (AS, 1 row), 66 (GU, 742), 69
+        (MP, 94), 72 (PR, 1,792), 78 (VI, 551) and pseudo-codes 9A
+        Armed Forces Central/South America (183), 9B Armed Forces
+        Europe (201), 9C Armed Forces Pacific (329), 9D Unknown
+        (219), 9E Foreign Country (297) each get their own state
+        rows with matching national benchmarks — no special
+        treatment.
+      - **`payment_to_charge_ratio` can exceed 1.0 at the state
+        grain** on 13 rows in the current vintage, all for HCPCS
+        M0010 ("chelation therapy of the calcium type", $70
+        baseline) and one G0442 (alcohol misuse screening) row. The
+        outputs are legitimate CMS data — geographic-adjustment
+        multipliers occasionally push the payment above the
+        provider-population average submitted charge — so the
+        column has an `accepted_range` with a generous `max_value: 2`
+        rather than 1. Empirical max 1.089.
+      - **No foreign keys.** Same reasoning as `fct_hcpcs_service`
+        — no HCPCS dim, no state dim (dim_county is county-grain).
+    columns:
+      - name: geography_level
+        description: |
+          `'National'` for the 13,463 all-USA rollup rows or `'State'`
+          for the 254,887 state-code detail rows. Filter on this when
+          aggregating to avoid double-counting.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [National, State]
+      - name: geography_code
+        description: |
+          Two-character CMS state / territory / pseudo-code (`'01'`
+          Alabama, `'72'` Puerto Rico, `'9E'` Foreign Country, etc.).
+          `NULL` on every National row (by design — CMS omits it)
+          and on 5 State rows that CMS shipped without a geography
+          code in the current vintage.
+      - name: geography_description
+        description: |
+          Human-readable label paired with `geography_code`
+          (`'National'`, `'Alabama'`, `'Armed Forces Pacific'`, ...).
+          `NULL` on the same 5 unmapped State rows.
+      - name: hcpcs_code
+        description: |
+          Five-character HCPCS Level I (CPT) or Level II code the
+          service was billed under. Never null; always exactly five
+          characters. Grain column.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_value_lengths_to_equal:
+              arguments:
+                value: 5
+      - name: hcpcs_description
+        description: |
+          Long descriptor for the HCPCS code. Never null.
+        data_tests:
+          - not_null
+      - name: hcpcs_drug_indicator
+        description: |
+          `Y` Part-B drug HCPCS (15,435 rows in the mart), `N`
+          medical service (252,915). Never null.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Y", "N"]
+      - name: place_of_service
+        description: |
+          `F` facility or `O` office / non-facility. Grain column.
+          Never null.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["F", "O"]
+      - name: total_rendering_providers
+        description: |
+          Distinct rendering NPIs billing this HCPCS × place-of-service
+          in the geography cell. Never null. State-level empirical
+          range 1–56,654; National-level 1–641,674.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: total_beneficiaries
+        description: |
+          Distinct Medicare beneficiaries served in the geography
+          cell. Never null and never below 11 (CMS drops smaller
+          cells from the file). State-level range 11–2,058,053;
+          National-level 11–21,005,950.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 11
+                inclusive: true
+      - name: total_services
+        description: |
+          Total Medicare services billed in the geography cell.
+          Never null.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_beneficiary_day_services
+        description: |
+          Beneficiary-days of service in the geography cell. Never
+          null.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: avg_submitted_charge
+        description: |
+          Provider-population average submitted charge per service
+          in the geography cell, in dollars. Never null.
+        data_tests:
+          - not_null
+      - name: avg_medicare_allowed_amount
+        description: |
+          Average Medicare-allowed amount per service (payment plus
+          beneficiary cost-share), in dollars. Never null.
+        data_tests:
+          - not_null
+      - name: avg_medicare_payment_amount
+        description: |
+          Average dollars Medicare paid per service in the geography.
+          Never null. Always at most `avg_medicare_allowed_amount`
+          (enforced upstream via the model-level
+          `dbt_utils.expression_is_true` test on the staging file).
+        data_tests:
+          - not_null
+      - name: avg_medicare_standardized_amount
+        description: |
+          Average payment per service normalised to remove regional
+          geographic-adjustment differences. Never null.
+        data_tests:
+          - not_null
+      - name: national_total_rendering_providers
+        description: |
+          National-benchmark: distinct rendering NPIs for the (HCPCS,
+          pos) across the whole USA. `NULL` on National rows.
+      - name: national_total_beneficiaries
+        description: |
+          National-benchmark: distinct beneficiaries served for the
+          (HCPCS, pos) across the whole USA. `NULL` on National rows.
+      - name: national_total_services
+        description: |
+          National-benchmark: total Medicare services billed for the
+          (HCPCS, pos). `NULL` on National rows.
+      - name: national_total_beneficiary_day_services
+        description: |
+          National-benchmark: distinct beneficiary-days of service.
+          `NULL` on National rows.
+      - name: national_avg_submitted_charge
+        description: |
+          National-benchmark average submitted charge, in dollars.
+          `NULL` on National rows.
+      - name: national_avg_medicare_allowed_amount
+        description: |
+          National-benchmark average allowed amount, in dollars.
+          `NULL` on National rows.
+      - name: national_avg_medicare_payment_amount
+        description: |
+          National-benchmark average Medicare payment, in dollars.
+          `NULL` on National rows.
+      - name: national_avg_medicare_standardized_amount
+        description: |
+          National-benchmark average standardized payment, in
+          dollars. `NULL` on National rows.
+      - name: share_of_national_services
+        description: |
+          `total_services / national_total_services` — the state's
+          share of national service volume for the (HCPCS, pos).
+          `NULL` on National rows. Empirical range 4.4e-7–1.0 at the
+          state grain; 254,731 state cells are below 1 and 156 are
+          exactly 1 (single-state HCPCS with no suppression).
+      - name: share_of_national_beneficiaries
+        description: |
+          `total_beneficiaries / national_total_beneficiaries` — the
+          state's share of national distinct beneficiaries. `NULL`
+          on National rows.
+      - name: payment_to_charge_ratio
+        description: |
+          `avg_medicare_payment_amount / avg_submitted_charge`.
+          Never null. Range covers a small overshoot above 1.0 on
+          13 state rows (all M0010 with one G0442, driven by
+          geographic-adjustment multipliers) — see the model
+          description; the `accepted_range` below uses `max_value: 2`
+          rather than 1 to admit these legitimate outliers while
+          still catching obvious data errors.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 2
+                inclusive: true
+      - name: payment_to_allowed_ratio
+        description: |
+          `avg_medicare_payment_amount / avg_medicare_allowed_amount`
+          — the payment / allowed split, which reflects beneficiary
+          cost-share (deductible / coinsurance). Never null; range
+          0.20–1.0 across the fact.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+      - name: as_of
+        description: |
+          Snapshot vintage: the upstream `modified` date CMS reported
+          for the by-geography-and-service file at capture time (from
+          `stg_cms__dataset_vintages`). Constant across rows;
+          2026-05-21 in the current vintage.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - geography_level
+              - geography_code
+              - hcpcs_code
+              - place_of_service
