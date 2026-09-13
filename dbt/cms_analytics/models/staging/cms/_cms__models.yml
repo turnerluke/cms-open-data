@@ -4092,3 +4092,263 @@ models:
             expression: |
               (unweighted_efficiency_and_cost_reduction_score is null)
                 = (weighted_efficiency_and_cost_reduction_score is null)
+
+  - name: stg_cms__medicaid_state_drug_utilization
+    description: |
+      Medicaid State Drug Utilization Data (SDUD), calendar year
+      2023 (data.medicaid.gov DKAN dataset
+      `d890d3a9-6b00-43fd-8b31-fcba4c8e2909`). CMS partitions SDUD
+      as one dataset UUID per calendar year; this staging model
+      reads the 2023 vintage (5,326,586 rows, 115 MB Parquet) and
+      will be extended per additional year via new registry rows
+      + a `union all` here as they land. Rows are Medicaid drug
+      utilization aggregates at the grain of (`utilization_type`,
+      `state`, `ndc`, `calendar_year`, `calendar_quarter`) —
+      verified unique (0
+      duplicate tuples across 5.33M rows). Two utilization channels
+      interleave: `FFSU` (Fee-For-Service, 2,539,160 rows) and
+      `MCOU` (Managed-Care Organization, 2,787,426 rows). 53 states
+      are present: 50 states + DC + PR + a CMS pseudo-state `XX`
+      (321,345 rows) that carries the national aggregate. `XX` is
+      NOT the plain sum of state rows because states apply a
+      count-suppression rule (1–10 prescriptions → all five
+      measures blanked, `suppression_used = true`) that affects
+      ~51.5% of state rows; `XX` re-adds those blanked values from
+      CMS's unsuppressed source, so `XX_total >= sum(state totals)`
+      by construction (verified: every disclosed cross-check has
+      XX >= sum(states); equality is dominated by cells where no
+      state was suppressed — 3,014 of 3,167 equal cells, the other
+      153 net out). Downstream marts must filter to
+      `state = 'XX'` for national totals or `state != 'XX'` for
+      state-level roll-ups — never mix.
+
+      Five measure columns (`units_reimbursed`,
+      `number_of_prescriptions`, `total_amount_reimbursed`,
+      `medicaid_amount_reimbursed`, `non_medicaid_amount_reimbursed`)
+      are all `NULL` iff `suppression_used = true`, and all
+      populated iff `false` — no partial suppression, no
+      unparseable values (verified 0 `try_cast` failures across
+      all five columns). All disclosed
+      `number_of_prescriptions` values are >= 11 (the CMS
+      disclosure threshold), and the identity
+      `total = medicaid + non_medicaid` holds on 100% of disclosed
+      rows (0 violations at 0.01 tolerance).
+
+      `product_name` is a CMS-truncated string (≤10 characters, 94%
+      of non-blank values at 9–10); 61% of NDCs (32,704 of 53,205)
+      map to more than one distinct non-blank truncated name (e.g.
+      `'0.9% NACL '` and `'0.9% Sodiu'` for
+      the same NDC), so it is NOT a reliable drug name. Any
+      drug-dimension linkage in PR2's marts must join on the 11-
+      digit `ndc` (or its `labeler_code` / `product_code` /
+      `package_size` components), never on `product_name`. 8,400
+      rows ship with an all-blank `Product Name`; those are
+      nulled out on load.
+    columns:
+      - name: utilization_type
+        description: |
+          Utilization channel: `FFSU` (Fee-For-Service Utilization,
+          2,539,160 rows) or `MCOU` (Managed-Care Organization
+          Utilization, 2,787,426 rows). Grain column.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["FFSU", "MCOU"]
+      - name: state
+        description: |
+          Two-letter USPS state code, plus `DC`, `PR`, and the CMS
+          pseudo-state `XX` (national aggregate, 321,345 rows).
+          All 53 values are 2 uppercase letters. Grain column.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[A-Z]{2}$"
+      - name: ndc
+        description: |
+          11-digit National Drug Code, concatenation of
+          `labeler_code` (5) + `product_code` (4) +
+          `package_size` (2). 53,205 distinct values; never
+          `NULL`. Grain column. Preferred drug key for downstream
+          joins — `product_name` is CMS-truncated and not
+          reliable.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[0-9]{11}$"
+      - name: labeler_code
+        description: |
+          5-digit labeler (manufacturer / relabeler) segment of the
+          NDC. 885 distinct labelers in this vintage. Always
+          numeric, always present.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[0-9]{5}$"
+      - name: product_code
+        description: |
+          4-digit product (drug formulation & strength) segment of
+          the NDC. Always numeric, always present.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[0-9]{4}$"
+      - name: package_size
+        description: |
+          2-digit package-size segment of the NDC. Always numeric,
+          always present.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[0-9]{2}$"
+      - name: calendar_year
+        description: |
+          Calendar year (raw `Year`, renamed away from the reserved
+          SQL word). All rows carry `2023` in this vintage; the
+          staging model will grow to cover additional years once
+          new registry rows land.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [2023]
+      - name: calendar_quarter
+        description: |
+          Calendar quarter 1–4 (raw `Quarter`, renamed away from
+          the reserved SQL word). All four quarters present with
+          roughly balanced row counts: Q1 = 1,358,311,
+          Q2 = 1,329,088, Q3 = 1,319,180, Q4 = 1,320,007.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4]
+      - name: suppression_used
+        description: |
+          Boolean. `true` on 2,662,042 rows (~50%) — CMS
+          blank-suppresses all five measure columns when
+          `number_of_prescriptions` would be 1–10 (verified: every
+          disclosed row has `number_of_prescriptions >= 11`).
+          `false` on 2,664,544 rows. Every suppressed row has all
+          five measure columns `NULL`; every disclosed row has all
+          five populated — enforced by the paired-guard tests
+          below.
+        data_tests:
+          - not_null
+      - name: product_name
+        description: |
+          CMS-truncated product name (≤10 characters in the raw
+          column, 94% at 9–10). NOT a reliable drug name: 32,704 of
+          the 53,205 NDCs (61%) map to multiple distinct non-blank
+          truncated strings
+          (e.g. `'0.9% NACL '` and `'0.9% Sodiu'` for the same
+          NDC). 8,400 rows ship all-blank; those are nulled here.
+          Use `ndc` for joins.
+      - name: units_reimbursed
+        description: |
+          Package units reimbursed for the cell. Unit of measure
+          depends on the NDC's packaging (not a fixed dose).
+          `NULL` iff `suppression_used = true`. Non-negative when
+          disclosed (verified: 0 negative rows).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: number_of_prescriptions
+        description: |
+          Number of prescriptions dispensed. `NULL` iff
+          `suppression_used = true`. When disclosed the minimum
+          is 11 (CMS disclosure threshold — anything 1–10 is
+          suppressed) and the maximum in this vintage is
+          1,014,497.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 11
+                inclusive: true
+      - name: total_amount_reimbursed
+        description: |
+          Total amount reimbursed (Medicaid + non-Medicaid) in
+          dollars. `NULL` iff `suppression_used = true`.
+          Non-negative when disclosed. Equals
+          `medicaid_amount_reimbursed +
+          non_medicaid_amount_reimbursed` on 100% of disclosed
+          rows (0 violations at 0.01 tolerance).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: medicaid_amount_reimbursed
+        description: |
+          Medicaid share of the reimbursement in dollars. `NULL`
+          iff `suppression_used = true`. Non-negative when
+          disclosed.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: non_medicaid_amount_reimbursed
+        description: |
+          Non-Medicaid share (third-party liability, cost-sharing)
+          in dollars. `NULL` iff `suppression_used = true`.
+          Non-negative when disclosed.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - utilization_type
+              - state
+              - ndc
+              - calendar_year
+              - calendar_quarter
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicaid_state_drug_utilization__ndc_composed_from_parts
+          arguments:
+            expression: |
+              ndc = labeler_code || product_code || package_size
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicaid_state_drug_utilization__suppression_pairs_units
+          arguments:
+            expression: |
+              suppression_used = (units_reimbursed is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicaid_state_drug_utilization__suppression_pairs_rx
+          arguments:
+            expression: |
+              suppression_used = (number_of_prescriptions is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicaid_state_drug_utilization__suppression_pairs_total
+          arguments:
+            expression: |
+              suppression_used = (total_amount_reimbursed is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicaid_state_drug_utilization__suppression_pairs_medicaid
+          arguments:
+            expression: |
+              suppression_used = (medicaid_amount_reimbursed is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicaid_state_drug_utilization__suppression_pairs_non_medicaid
+          arguments:
+            expression: |
+              suppression_used = (non_medicaid_amount_reimbursed is null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__medicaid_state_drug_utilization__total_equals_medicaid_plus_non
+          arguments:
+            expression: |
+              suppression_used
+              or abs(total_amount_reimbursed
+                     - (medicaid_amount_reimbursed
+                        + non_medicaid_amount_reimbursed)) < 0.01
