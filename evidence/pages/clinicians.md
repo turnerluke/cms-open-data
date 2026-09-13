@@ -393,7 +393,337 @@ high-volume clinicians, so the cohorts are not exchangeable. The
 utilization gap is what the two selected populations look like side
 by side, not the effect of receiving a payment.
 
+## What Medicare pays for
+
+Switching from the payments-to-clinicians side to the payments-from-Medicare
+side. `fct_hcpcs_service` rolls the CMS-published Physician & Other
+Practitioners by-geography-and-service file up to
+(`hcpcs_code`, `place_of_service`) — 13,463 National-grain rows in the
+current 2026-05-21 vintage, one per procedure code × facility/office
+split. Every headline below is computed from that National grain; state
+rows never contribute to totals here.
+
+```sql svc_headline
+select
+    service_rows,
+    distinct_hcpcs,
+    total_services,
+    total_program_payment,
+    median_payment_to_charge,
+    drug_rows,
+    as_of
+from cms.physician_service_headline
+```
+
+<BigValue data={svc_headline} value=total_program_payment title="Total program payment (services × avg payment)" fmt=usd1b />
+<BigValue data={svc_headline} value=total_services title="Total services billed" fmt=num0 />
+<BigValue data={svc_headline} value=distinct_hcpcs title="Distinct HCPCS codes" fmt=num0 />
+<BigValue data={svc_headline} value=median_payment_to_charge title="Median payment / charge ratio" fmt=pct1 />
+
+3.55 billion services and $120.8B of Medicare program payment — the
+"program payment" here is `sum(total_services * avg_medicare_payment_amount)`
+across all 13,463 National rows, which is the CMS-published all-USA
+dollar total for the fee-for-service physician side of Medicare
+(carrier + DME) as reported in this file. Every dollar is exposed at
+HCPCS grain, so a top-N ranking captures where the money actually
+goes.
+
+The top 20 (HCPCS, place) cells by total payment:
+
+```sql top_payment
+select
+    hcpcs_code,
+    hcpcs_description,
+    place_of_service,
+    hcpcs_drug_indicator,
+    total_services,
+    avg_medicare_payment_amount,
+    total_program_payment,
+    payment_to_charge_ratio
+from cms.physician_service_top_payment
+order by total_program_payment desc
+```
+
+<BarChart
+  data={top_payment}
+  x=hcpcs_code
+  y=total_program_payment
+  series=place_of_service
+  swapXY=true
+  title="Top 20 HCPCS × place-of-service cells by 2026-vintage program payment"
+  yFmt=usd1b
+/>
+
+<DataTable data={top_payment}>
+  <Column id=hcpcs_code title="HCPCS" />
+  <Column id=hcpcs_description title="Description" wrap=true />
+  <Column id=place_of_service title="Place" />
+  <Column id=total_services title="Services" fmt=num0 />
+  <Column id=avg_medicare_payment_amount title="$ / service" fmt=usd2 />
+  <Column id=total_program_payment title="Total $" fmt=usd0 />
+  <Column id=payment_to_charge_ratio title="Pay / charge" fmt=pct1 />
+</DataTable>
+
+Two shapes dominate the list. Office E&M (99214, 99213, 99215, 99204,
+G0439 wellness visits) rings up billions on very high volume — 99214
+alone is $8.0B across 95M services. Facility inpatient E&M (99223,
+99232, 99233, 99285 ED visits, 99291 critical care) is the same story
+on the hospital side. Punctuating both tails are a handful of
+per-unit-expensive items: cataract removal (66984), Part-B drugs
+(J0178 aflibercept, J9271 pembrolizumab, J2777 faricimab), and a few
+graft/wrap codes (Q4205, Q4271) where the average charge runs into
+four figures.
+
+### Facility vs office
+
+```sql place_split
+select
+    place,
+    service_rows,
+    distinct_hcpcs,
+    total_services,
+    total_program_payment,
+    avg_payment_per_service
+from cms.physician_service_place_split
+```
+
+<DataTable data={place_split}>
+  <Column id=place title="Place of service" />
+  <Column id=service_rows title="Rows" fmt=num0 />
+  <Column id=distinct_hcpcs title="Distinct HCPCS" fmt=num0 />
+  <Column id=total_services title="Services" fmt=num0 />
+  <Column id=total_program_payment title="Total $" fmt=usd0 />
+  <Column id=avg_payment_per_service title="$ / service" fmt=usd2 />
+</DataTable>
+
+Office / non-facility accounts for the bulk of both service volume
+(3.05B of 3.55B, 86%) and dollars ($85.6B of $120.8B, 71%). Facility
+services are fewer (506M) but each one costs Medicare more on average
+($69.52 vs $28.09) — the site-of-service differential is worth about
+2.5× per service in this vintage.
+
+## Payment vs charge
+
+Providers submit charges (`avg_submitted_charge`) that are far higher
+than what Medicare's fee schedule actually pays. The median HCPCS ×
+place cell has a `payment_to_charge_ratio` of
+<Value data={svc_headline} column=median_payment_to_charge fmt=pct1 />
+— Medicare pays about 17 cents per submitted dollar on the typical
+service.
+
+Bucketed distribution across all 13,463 National-grain rows:
+
+```sql pay_charge_buckets
+select
+    bucket,
+    service_rows,
+    total_services,
+    program_payment
+from cms.physician_service_payment_charge_buckets
+```
+
+<BarChart
+  data={pay_charge_buckets}
+  x=bucket
+  y=service_rows
+  title="HCPCS × place cells by payment-to-charge ratio"
+  yFmt=num0
+/>
+
+<DataTable data={pay_charge_buckets}>
+  <Column id=bucket title="Pay / charge bucket" />
+  <Column id=service_rows title="HCPCS rows" fmt=num0 />
+  <Column id=total_services title="Services" fmt=num0 />
+  <Column id=program_payment title="Program $" fmt=usd0 />
+</DataTable>
+
+Just under half the rows (6,579 of 13,463, 49%) land in the 10–20%
+band, and a further 2,783 (21%) in 20–30%. Only 588 rows (4.4%) pay
+back more than half of the submitted charge, and 181 (1.3%) pay 75%
+or more — mostly low-dollar items where the submitted charge is
+already close to the fee schedule.
+
+Absolute-dollar gaps concentrate in the highest-volume services. The
+15 HCPCS with the largest total `submitted − paid` gap (at least
+100k services nationally):
+
+```sql charge_gap
+select
+    hcpcs_code,
+    hcpcs_description,
+    place_of_service,
+    total_services,
+    avg_submitted_charge,
+    avg_medicare_payment_amount,
+    payment_to_charge_ratio,
+    charge_minus_payment_dollars
+from cms.physician_service_charge_gap
+order by charge_minus_payment_dollars desc
+```
+
+<BarChart
+  data={charge_gap}
+  x=hcpcs_code
+  y=charge_minus_payment_dollars
+  swapXY=true
+  title="Top 15 HCPCS by total submitted-minus-paid gap (services ≥ 100k)"
+  yFmt=usd1b
+/>
+
+<DataTable data={charge_gap}>
+  <Column id=hcpcs_code title="HCPCS" />
+  <Column id=hcpcs_description title="Description" wrap=true />
+  <Column id=place_of_service title="Place" />
+  <Column id=avg_submitted_charge title="Avg charge" fmt=usd2 />
+  <Column id=avg_medicare_payment_amount title="Avg paid" fmt=usd2 />
+  <Column id=payment_to_charge_ratio title="Pay / charge" fmt=pct1 />
+  <Column id=charge_minus_payment_dollars title="Total gap" fmt=usd0 />
+</DataTable>
+
+The largest single gap is 99214 at $18.4B — 95M services with an
+average charge of $276 against a paid amount of $83.75. ED visits
+(99285), knee replacement (27447), and critical-care (99291) all pay
+back 10–20% of the submitted charge. Read this as reporting
+convention rather than as denial: `avg_submitted_charge` is what the
+provider population billed, which under Medicare is largely irrelevant
+because the program pays the fee schedule regardless of what the
+claim says. The submitted charge is a data-quality signal about the
+provider's non-Medicare billing baseline, not a negotiation
+counter-offer.
+
+## Geography benchmarks
+
+`fct_physician_service_geography` carries a National benchmark inline
+on every state row (`national_avg_medicare_payment_amount` and
+friends), which makes state-vs-national comparisons a single-table
+lookup. Aggregating a state's own service mix at state prices versus
+the same mix at national prices gives a "payment index" — greater
+than 1 means the state gets paid above what the national fee
+schedule would apply to its mix, less than 1 means below. All the
+state rankings here are the 50 states + DC only; the territory codes
+(60/66/69/72/78) and Armed Forces / unknown / foreign pseudo-codes
+(9A–9E) are excluded because their volumes are small enough that a
+handful of outlier cells swing the aggregate, and the five state
+rows CMS emitted with NULL geography_code (see caveats) are dropped
+as well.
+
+```sql state_index
+select
+    geography_code,
+    geography_description,
+    state_services,
+    state_payment,
+    payment_index
+from cms.physician_service_state_index
+order by payment_index desc
+```
+
+<BarChart
+  data={state_index}
+  x=geography_description
+  y=payment_index
+  swapXY=true
+  title="State payment index — state mix priced at state vs national avg"
+  yFmt=num2
+>
+  <ReferenceLine y=1 label="National = 1.00" />
+</BarChart>
+
+<DataTable data={state_index}>
+  <Column id=geography_description title="State" />
+  <Column id=state_services title="Services" fmt=num0 />
+  <Column id=state_payment title="State $" fmt=usd0 />
+  <Column id=payment_index title="Payment index" fmt=num3 />
+</DataTable>
+
+Alaska tops the ranking at 1.162, then a cluster of high-cost / high
+GPCI states (NY 1.083, DC 1.076, NJ 1.071, CA 1.069). Maine anchors
+the bottom at 0.875, alongside Alabama, West Virginia, South Dakota,
+and Kentucky (all ≤ 0.92). The median state runs at 0.969 — most
+states get slightly less per unit of service than the national
+average, which is exactly what happens when the population-weighted
+national average is pulled up by a small number of large
+high-cost-of-labor states.
+
+Zooming in on a single anchor code — 99214 O, the highest-payment
+single cell in the file at $8.0B nationally — the same pattern shows
+up cleanly:
+
+```sql anchor
+select
+    geography_code,
+    geography_description,
+    total_services,
+    state_avg_payment,
+    national_avg_payment,
+    share_of_national_services,
+    payment_ratio
+from cms.physician_service_state_anchor_99214
+order by payment_ratio desc
+```
+
+<ScatterPlot
+  data={anchor}
+  x=share_of_national_services
+  y=payment_ratio
+  title="99214 O — state vs national payment ratio by share of national volume"
+  xAxisTitle="Share of national 99214 services"
+  yAxisTitle="State $/service ÷ national $/service"
+  xFmt=pct2
+  yFmt=num2
+  pointSize=8
+>
+  <ReferenceLine y=1 label="National = 1.00" />
+</ScatterPlot>
+
+Alaska pays 1.211× the national average ($101.38 vs $83.75), DC
+1.158, New York 1.156, California 1.129, New Jersey 1.125. At the
+other end North Dakota, Maine, and Arkansas run at 0.81–0.85. The
+spread — top state pays about 1.50× what the bottom state does — is
+entirely fee-schedule geography (GPCI locality adjustments). It is
+not a quality or intensity signal.
+
 ## Caveats
+
+- **Service-file snapshot has no year.** `fct_hcpcs_service` and
+  `fct_physician_service_geography` are single-vintage rollups of the
+  Physician & Other Practitioners by-geography-and-service file
+  (2026-05-21 in the current vintage, `as_of` column). CMS does not
+  publish a claims year on this file, so nothing in the service and
+  geography sections is a time series.
+- **National-grain is authoritative for totals.**
+  `fct_hcpcs_service` sources its 13,463 rows from the National rows
+  of the upstream staging model rather than aggregating the 9.78M-row
+  by-provider-and-service file. The two disagree because CMS drops
+  (npi, hcpcs, pos) cells with 10 or fewer beneficiaries from the
+  provider file — 22.4% of program-wide services (798M of 3.55B)
+  live entirely in that sub-11 suppression tail. Summing state rows
+  in `fct_physician_service_geography` also under-counts national
+  volume for the same reason. Every total on this page is computed
+  from the National grain.
+- **`avg_submitted_charge` is not a negotiation.** Under Medicare
+  fee-for-service, the program pays the fee schedule regardless of
+  what the claim's submitted amount says. The submitted charge in
+  this file is a provider-population average — a data-quality
+  reflection of what the provider bills their non-Medicare book —
+  not evidence of a rejected offer. All the payment-vs-charge charts
+  above should be read as descriptive, not as denial rates.
+- **Geography rankings exclude territories and NULL-code rows.** The
+  50-states-plus-DC filter drops five state rows CMS emitted without
+  a geography_code (all E&M / psychotherapy codes: 90833/F, 99223/F,
+  99232/F, 99233/F, 99239/F), the five territory codes 60 (AS), 66
+  (GU), 69 (MP), 72 (PR), 78 (VI), and the five pseudo-codes 9A
+  (Armed Forces Central/South America) through 9E (Foreign Country).
+  All 10 non-state codes are populated as ordinary state rows in the
+  mart — this is a display choice for the rankings only.
+- **State `payment_to_charge_ratio` can exceed 1.0.** 13 state rows
+  in the current vintage cross the 1.0 line — 12 for HCPCS M0010
+  (chelation therapy, ~$70 baseline) and one for G0442. National
+  rows never do. Geographic-adjustment multipliers occasionally push
+  a small-dollar service above the provider-population average
+  submitted charge; those rows are legitimate and are included as-is.
+
+## Open-Payments caveats
 
 - **One program year.** `fct_industry_payments` currently holds
   program year 2024 only (`payment_year = 2024`, published mid-2025).
