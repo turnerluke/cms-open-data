@@ -3303,3 +3303,470 @@ models:
               - geography_code
               - hcpcs_code
               - place_of_service
+
+  - name: fct_medicaid_drug_state
+    description: |
+      Medicaid State Drug Utilization rolled up from the quarterly
+      (utilization_type, state, ndc, quarter) staging grain to a
+      (state, ndc, calendar_year) grain, with Fee-For-Service (FFS) and
+      Managed-Care Organization (MCO) channels pivoted into side-by-side
+      column families. 5,326,586 staging rows (2,539,160 FFSU +
+      2,787,426 MCOU) fold into 1,254,792 pivoted rows:
+      53,205 national (`state = 'XX'`, one per NDC) and 1,201,587
+      state-tier rows.
+
+      Modeling choices to be aware of:
+
+      - **Tier flag `is_state_tier`** encodes the split staging warns
+        about: `state = 'XX'` is the CMS unsuppressed national
+        aggregate that re-adds state-suppressed values, and the 52
+        state codes (50 states + DC + PR) are the disclosed
+        state-level tier. Downstream must always filter to one tier —
+        never sum across `is_state_tier` values. XX >= sum(states)
+        always: national XX totals $111.742B (medicaid share
+        $106.346B); state tier totals $104.681B (medicaid share
+        $99.773B) — a $7.061B / 6.3% suppression undercount in the
+        state tier. Any state-level ranking here must footnote that
+        gap.
+      - **Quarters are aggregated with `sum()`.** SQL `sum()` skips
+        nulls, so a suppressed quarter contributes 0 to the annual
+        total — no coalescing to 0 anywhere. The disclosure counters
+        `ffs_quarters_reported` / `ffs_disclosed_quarters` (0-4) and
+        the MCO pair preserve the missingness signal per channel:
+        `disclosed_quarters < quarters_reported` means at least one
+        quarter was CMS-suppressed and the annual total is an
+        undercount for that (state, ndc, channel).
+      - **Fully-suppressed rows are kept.** 592,615 rows (47%) have
+        every measure column null — every quarter of both channels
+        was suppressed. Keeping them makes the fact a lossless
+        (state, ndc, year) enumeration; filter on
+        `total_amount_reimbursed is not null` for cost analysis.
+      - **Combined-channel totals** (`total_amount_reimbursed`,
+        `medicaid_amount_reimbursed`, `non_medicaid_amount_reimbursed`,
+        `number_of_prescriptions`, `units_reimbursed`) add the two
+        channels with `coalesce(_, 0) + coalesce(_, 0)`, but only
+        after checking both sides aren't simultaneously null — that
+        preserves the "no data at all" signal as null instead of a
+        misleading 0.
+      - **Channel coverage**: of the 1,254,792 (state, ndc, year)
+        combos, 487,023 (39%) appear in both channels, 355,324 (28%)
+        in FFS only, and 412,445 (33%) in MCO only. NULL in one
+        channel's column family means "the drug wasn't dispensed in
+        that channel for this (state, ndc, year)" — not suppression;
+        the suppression signal lives in `disclosed_quarters` where
+        the channel *is* present.
+      - **`units_reimbursed` is package-units, not a fixed dose**
+        (inherited from staging). The unit-of-measure depends on the
+        NDC's packaging, so it's summable within an NDC but not
+        across NDCs. `number_of_prescriptions` is the comparable
+        volume measure.
+      - **No `drug_key` FK.** SDUD keys drugs by NDC while the
+        `dim_drug` surrogate hashes brand + generic names. SDUD's
+        `product_name` is truncated at 10 characters and 32,704 of
+        53,205 NDCs (61%) map to multiple truncated strings; a
+        prefix-10 match against `dim_drug` covers only $36.9B of the
+        $111.7B national dollars unambiguously, with $15.8B in
+        multi-candidate matches and $59.0B unmatched — too weak to
+        ship as a silent bridge. The fact stays keyed on NDC and
+        leaves cross-program drug-level joins to consumers who can
+        supply their own NDC → brand/generic crosswalk.
+    columns:
+      - name: state
+        description: |
+          Two-letter state code. 52 disclosed values (50 states + DC
+          + PR) plus `'XX'` for the CMS national aggregate. Use
+          `is_state_tier` to filter cleanly. Grain column.
+        data_tests:
+          - not_null
+      - name: ndc
+        description: |
+          11-character National Drug Code. Grain column.
+          `labeler_code || product_code || package_size == ndc` on
+          every row (verified in staging).
+        data_tests:
+          - not_null
+      - name: labeler_code
+        description: |
+          Five-character labeler (manufacturer / repackager) segment
+          of the NDC. Never null.
+        data_tests:
+          - not_null
+      - name: product_code
+        description: |
+          Four-character product (drug + strength + form) segment of
+          the NDC. Never null.
+        data_tests:
+          - not_null
+      - name: package_size
+        description: |
+          Two-character package (size + type) segment of the NDC.
+          Never null.
+        data_tests:
+          - not_null
+      - name: calendar_year
+        description: |
+          Calendar year the utilization covers. Grain column. The
+          current vintage ships 2023 only; a future SDUD year
+          arriving in the source registry would surface here as
+          additional rows.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [2023]
+                quote: false
+      - name: is_state_tier
+        description: |
+          `TRUE` for the 52 disclosed state codes (1,201,587 rows);
+          `FALSE` for the national CMS-aggregate `'XX'` tier
+          (53,205 rows). Filtering by this column, not by raw
+          `state`, keeps roll-ups from silently mixing tiers.
+        data_tests:
+          - not_null
+      - name: ffs_quarters_reported
+        description: |
+          Count of quarters (1-4) in which FFS activity was reported
+          for the (state, ndc, year), disclosed or suppressed.
+          `NULL` when the channel has no rows at all for this combo
+          (355,324 FFS-only + 487,023 both = 842,347 non-null rows;
+          412,445 nulls for MCO-only combos).
+      - name: ffs_disclosed_quarters
+        description: |
+          Count of FFS quarters (0-4) with `suppression_used = FALSE`
+          — i.e. that contributed non-null values to the sums. When
+          this is less than `ffs_quarters_reported`, at least one
+          quarter was CMS-suppressed and the annual FFS totals are
+          an undercount for this (state, ndc).
+      - name: ffs_units_reimbursed
+        description: |
+          Total FFS package-units reimbursed across disclosed
+          quarters. Package units depend on NDC packaging; safe to
+          sum within an NDC, not across.
+      - name: ffs_number_of_prescriptions
+        description: |
+          Total FFS prescriptions across disclosed quarters. This is
+          the volume measure that is comparable across NDCs.
+      - name: ffs_total_amount_reimbursed
+        description: |
+          Total FFS reimbursement in dollars across disclosed
+          quarters. Equals FFS medicaid + non-medicaid on every row
+          (0 identity violations).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: ffs_medicaid_amount_reimbursed
+        description: |
+          FFS dollars reimbursed by Medicaid across disclosed
+          quarters (state + federal share).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: ffs_non_medicaid_amount_reimbursed
+        description: |
+          FFS dollars reimbursed by third-party payers across
+          disclosed quarters.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: mco_quarters_reported
+        description: |
+          Count of quarters (1-4) in which MCO activity was reported
+          for the (state, ndc, year). `NULL` when the channel has no
+          rows at all for this combo (412,445 MCO-only + 487,023
+          both = 899,468 non-null rows).
+      - name: mco_disclosed_quarters
+        description: |
+          Count of MCO quarters (0-4) that contributed non-null
+          values to the sums. Same undercount semantics as
+          `ffs_disclosed_quarters`.
+      - name: mco_units_reimbursed
+        description: "Total MCO package-units reimbursed."
+      - name: mco_number_of_prescriptions
+        description: "Total MCO prescriptions across disclosed quarters."
+      - name: mco_total_amount_reimbursed
+        description: |
+          Total MCO reimbursement in dollars across disclosed
+          quarters.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: mco_medicaid_amount_reimbursed
+        description: |
+          MCO dollars reimbursed by Medicaid across disclosed
+          quarters.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: mco_non_medicaid_amount_reimbursed
+        description: |
+          MCO dollars reimbursed by third-party payers across
+          disclosed quarters.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_amount_reimbursed
+        description: |
+          Combined FFS + MCO total reimbursement, in dollars.
+          `NULL` when both channels' inputs are simultaneously null
+          (fully-suppressed row) so "no disclosed data" stays
+          distinguishable from a reported zero. 662,177 rows carry a
+          non-null value; 592,615 are fully-suppressed nulls.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: medicaid_amount_reimbursed
+        description: |
+          Combined FFS + MCO dollars reimbursed by Medicaid.
+          Model-level `dbt_utils.expression_is_true` test enforces
+          `medicaid + non_medicaid = total` within a $0.02 tolerance
+          on every disclosed row.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: non_medicaid_amount_reimbursed
+        description: |
+          Combined FFS + MCO dollars reimbursed by third-party payers.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: number_of_prescriptions
+        description: |
+          Combined FFS + MCO prescriptions across all disclosed
+          quarters.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: units_reimbursed
+        description: |
+          Combined FFS + MCO package-units reimbursed.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: mco_share_of_medicaid_amount
+        description: |
+          `mco_medicaid_amount_reimbursed / medicaid_amount_reimbursed`
+          — the MCO channel's share of combined Medicaid dollars for
+          the (state, ndc, year). `NULL` when the combined figure is
+          null or zero. Empirical range on disclosed rows is 0.0-1.0.
+      - name: cost_per_prescription
+        description: |
+          `total_amount_reimbursed / number_of_prescriptions` —
+          combined-channel dollars per prescription. `NULL` when
+          either input is null or prescriptions are zero.
+      - name: as_of
+        description: |
+          Snapshot vintage: the upstream `modified` date CMS reported
+          for the SDUD 2023 file at capture time (from
+          `stg_cms__dataset_vintages`). Constant across rows;
+          2026-07-13 in the current vintage.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - state
+              - ndc
+              - calendar_year
+      # The staging file guarantees total = medicaid + non_medicaid on
+      # every disclosed row; because sum() is linear the identity
+      # survives quarter-and-channel aggregation. Verified: 0
+      # violations at 2-cent tolerance across all 662,177 disclosed
+      # combined rows.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              abs(
+                total_amount_reimbursed
+                - medicaid_amount_reimbursed
+                - non_medicaid_amount_reimbursed
+              ) <= 0.02
+          config:
+            where: "total_amount_reimbursed is not null"
+
+  - name: fct_medicaid_medicare_drug_spend
+    description: |
+      National program-level drug-spend comparison between Medicaid
+      (SDUD, both FFS and MCO) and Medicare (Part D pharmacy + Part B
+      provider-administered). One row per (`calendar_year`, `program_name`).
+      5 rows in the current vintage — all 2023.
+
+      This is a deliberately **aggregate-only** comparison. SDUD keys
+      drugs by NDC while the Medicare Part D and Part B files key by
+      brand / generic name and carry no NDC. SDUD's `product_name` is
+      truncated at 10 characters, so the natural fuzzy join is
+      prefix-10 name matching against `dim_drug`. Measured against the
+      $111.699B of disclosed Medicaid national (XX-tier) dollars:
+
+      - $36.907B (33.0%) lands on SDUD product-name prefixes that
+        match exactly one `dim_drug` (brand or generic) row.
+      - $15.791B (14.1%) lands on prefixes that match 2-110 candidate
+        `dim_drug` rows (2,855 SDUD prefixes matched anything; 1,732
+        matched uniquely, 839 matched 2-5 candidates, 284 matched 6+,
+        max 110).
+      - $59.001B (52.8%) lands on SDUD product-names with no
+        `dim_drug` prefix match at all — most SDUD NDCs (Medicaid
+        covers rebated small-molecule generics, biologics, physical
+        therapy, DMEs, medical supplies) simply aren't in the top-cost
+        Medicare drug files.
+
+      Even the unique-match rows have no NDC-level ground truth, so a
+      "silent" fuzzy bridge would introduce unquantified drug-level
+      error on ~14% of Medicaid dollars and would still be blind to
+      53% of them. Instead of shipping that, this mart compares the
+      programs at the national aggregate level and leaves drug-level
+      cross-program work to callers who can supply an authoritative
+      NDC → brand/generic crosswalk.
+
+      Row set for 2023:
+        Medicaid FFS      — SDUD, `state='XX'`, FFSU channel
+        Medicaid MCO      — SDUD, `state='XX'`, MCOU channel
+        Medicaid Total    — SDUD, `state='XX'`, both channels
+        Medicare Part D   — `manufacturer_name='Overall'` in
+                            `stg_cms__part_d_spending_by_drug`
+        Medicare Part B   — program-wide from
+                            `stg_cms__medicare_part_b_spending_by_drug`
+
+      Current-vintage values: Medicare Part D $275.809B dwarfs
+      Medicaid Total $111.742B (Medicaid FFS $47.283B + MCO $64.460B),
+      and Medicare Part B (provider-administered) at $50.776B lands
+      between them.
+
+      The Part D figure here ($275.809B, spending-by-drug file)
+      intentionally differs from the prescriber-file totals shown
+      elsewhere on the site ($288.418B total drug cost / $284.823B
+      MAPD+PDP in `fct_prescriber_profile`): the two CMS sources
+      roll up different universes (drug-level spending file vs
+      per-NPI prescriber totals) and neither reconciles to the
+      other. Comparisons in this mart stay within one source per
+      program.
+
+      Measure availability differs by program: Medicaid rows carry
+      `total_spending` and `total_claims` (prescriptions) but leave
+      `total_beneficiaries` and `total_dosage_units` null because SDUD
+      doesn't publish either. Medicare Part D and Part B publish all
+      four measures. Cross-program per-claim costs are loosely
+      comparable at best: a Medicaid "claim" is a prescription, a Part
+      D "claim" is a fill, and a Part B "claim" is a line item.
+    columns:
+      - name: calendar_year
+        description: |
+          Year the spending refers to. Grain column with `program_name`.
+          2023 is the only year both SDUD and the Medicare files
+          overlap in the current vintages.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [2023]
+                quote: false
+      - name: program_name
+        description: |
+          Program label: `Medicaid FFS`, `Medicaid MCO`,
+          `Medicaid Total`, `Medicare Part D`, or `Medicare Part B`.
+          Grain column. `Medicaid Total` is the FFS+MCO sum and is
+          double-counted with its two components — filter on `payer`
+          or explicit programs when summing rows.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Medicaid FFS
+                  - Medicaid MCO
+                  - Medicaid Total
+                  - Medicare Part D
+                  - Medicare Part B
+      - name: payer
+        description: |
+          `Medicaid` or `Medicare` — coarse category derived from
+          `program_name`. Useful for a two-bar comparison; use
+          `program_name` for finer breakdowns.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [Medicaid, Medicare]
+      - name: total_spending
+        description: |
+          Total program spending on drugs, in dollars. For Medicaid
+          rows this is `total_amount_reimbursed` from the SDUD file
+          (payer + third-party); for Medicare rows it's CMS's total
+          spending column (plan liability + beneficiary cost-share).
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_claims
+        description: |
+          Program-wide claim count. Definitions differ by program (a
+          Medicaid claim is a prescription; Part D claim is a fill;
+          Part B claim is a line item), so treat cross-program ratios
+          as directional. Never null in the current vintage.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: total_beneficiaries
+        description: |
+          Distinct beneficiaries with at least one drug claim.
+          Populated for Medicare Part D (478,573,074 — this is CMS's
+          reported unique-count and is not the sum of manufacturer
+          rows) and Medicare Part B (29,703,863). `NULL` for Medicaid
+          rows because SDUD does not publish a beneficiary count.
+      - name: total_dosage_units
+        description: |
+          Total dosage units dispensed / administered. Populated for
+          Medicare Part D (124,660,472,463) and Medicare Part B
+          (3,962,804,827); `NULL` for Medicaid rows. SDUD publishes
+          `units_reimbursed` in package-units (not comparable across
+          NDCs) which is intentionally not lifted into this column to
+          keep the field cross-program consistent.
+      - name: spending_per_claim
+        description: |
+          `total_spending / total_claims`. Cross-program comparisons
+          need the definitional caveat on `total_claims`.
+      - name: as_of
+        description: |
+          Snapshot vintage of the underlying source: SDUD
+          (2026-07-13) for Medicaid rows, `part_d_spending_by_drug`
+          (2026-06-25) for Medicare Part D, `medicare_part_b_spending_by_drug`
+          (2026-06-25) for Medicare Part B. Never null.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - calendar_year
+              - program_name
+      # `Medicaid Total` is computed in-model as `sum(FFS, MCO)` per
+      # calendar year, so the identity FFS + MCO = Total holds by
+      # construction and doesn't need a runtime test. Verified in the
+      # current vintage: FFS $47.283B + MCO $64.460B = Total $111.742B.
