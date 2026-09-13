@@ -2484,6 +2484,375 @@ models:
               or total_medicare_payment_amount is null
               or total_medicare_allowed_amount is null
 
+  - name: stg_cms__medicare_physician_by_provider_and_service
+    description: |
+      Medicare Physician & Other Practitioners — by Provider and
+      Service (CMS data-api/v1 dataset
+      `92396110-2aed-4d63-a6a2-5d6207d46a29`). One row per rendering
+      NPI × HCPCS code × place of service — 9,781,673 rows in the
+      RY26 vintage carrying calendar-2024 data. The bulk CSV covers
+      the latest published data year only and carries no year
+      column, so any provider-service-year grain must take the year
+      from the dataset vintage. CMS drops NPI-HCPCS combinations
+      with 10 or fewer beneficiaries from the file rather than
+      suppressing in place — so `total_beneficiaries` is never
+      `NULL` and never below 11, and unlike the by-provider summary
+      file this dataset has no suppression flag columns at all
+      (verified against every measure column: zero nulls on
+      `total_beneficiaries`, `total_services`,
+      `total_beneficiary_day_services`, and all four `avg_*` payment
+      columns). Averages are per-service (not per-beneficiary); the
+      submitted-charge column is capped at $99,999.99 by the
+      reporting-file format upstream. Staging renames the
+      abbreviated CMS columns (`Tot_Srvcs` → `total_services`,
+      `HCPCS_Cd` → `hcpcs_code`, `Place_Of_Srvc` →
+      `place_of_service`, etc.) and zero-pads the NPI to ten-digit
+      text. Grain: (`npi`, `hcpcs_code`, `place_of_service`) —
+      verified unique on all 9,781,673 rows.
+    columns:
+      - name: npi
+        description: |
+          National Provider Identifier of the rendering provider
+          (raw `Rndrng_NPI`), zero-padded ten-digit text. Grain
+          column. Every NPI in this file also appears in
+          `stg_cms__medicare_physician_by_provider` (verified: 0 of
+          1,207,473 distinct service-file NPIs are missing from the
+          by-provider summary file; the summary file additionally
+          carries 89,266 NPIs with no service-level detail, i.e.
+          providers whose every HCPCS combination was suppressed).
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{10}$'
+      - name: hcpcs_code
+        description: |
+          Five-character HCPCS Level I (CPT) or Level II code the
+          service was billed under. Always exactly five characters;
+          never null. Grain column. 1:1 with `hcpcs_description` and
+          `hcpcs_drug_indicator` in the current vintage (0 codes
+          carry >1 description or >1 drug indicator).
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_value_lengths_to_equal:
+              arguments:
+                value: 5
+      - name: place_of_service
+        description: |
+          `F` facility (hospital, ASC, SNF — 3,464,703 rows) or `O`
+          office / non-facility (6,316,970 rows). Never null. Grain
+          column.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["F", "O"]
+      - name: entity_code
+        description: |
+          `I` for an individual clinician (9,306,818 rows), `O` for
+          an organizational NPI (474,855 rows).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["I", "O"]
+      - name: state
+        description: |
+          Provider state abbreviation. Besides the 50 states this
+          includes DC, territories, `XX` (unknown), and `ZZ`
+          (foreign), matching the by-provider summary file's
+          convention. Never null.
+        data_tests:
+          - not_null
+      - name: state_fips
+        description: |
+          Two-digit state FIPS code, kept as text to preserve
+          leading zeros. Pseudo-codes cover the non-state buckets
+          (`9E` for `ZZ`/foreign, etc.). `NULL` on exactly 5 rows
+          in the current vintage (all state=`FM` / country=`US`, an
+          obsolete Micronesia code the reporting file leaves
+          unmapped).
+      - name: zip5
+        description: |
+          Five-digit ZIP of the provider's practice address, kept
+          as text. Foreign providers carry non-numeric local-format
+          codes here.
+      - name: ruca_code
+        description: |
+          Rural-Urban Commuting Area code of the practice ZIP.
+          Decimal subcodes like `4.1` are meaningful so it stays
+          numeric. `NULL` on 5,291 rows (0.05%) — 4,984 U.S. rows
+          without a ZIP-level RUCA plus 307 non-U.S. rows.
+      - name: country
+        description: |
+          Two-letter country code of the practice address; almost
+          always `US` (9,781,251 of 9,781,673 rows, 99.996%).
+        data_tests:
+          - not_null
+      - name: provider_type
+        description: |
+          CMS specialty of the rendering provider (e.g.
+          `Internal Medicine`, `Nurse Practitioner`).
+      - name: medicare_participating_indicator
+        description: |
+          `Y` if the provider participates in Medicare (9,779,092
+          rows), `N` otherwise (2,581 rows). Never null.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Y", "N"]
+      - name: hcpcs_description
+        description: |
+          Long descriptor for the HCPCS code (raw `HCPCS_Desc`).
+      - name: hcpcs_drug_indicator
+        description: |
+          `Y` if the HCPCS code is a Part-B drug administration
+          (529,613 rows), `N` for medical services (9,252,060).
+          Never null.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Y", "N"]
+      - name: total_beneficiaries
+        description: |
+          Distinct Medicare beneficiaries the provider served for
+          this HCPCS × place-of-service. Never `NULL` and never
+          below 11: CMS drops rows with 10 or fewer beneficiaries
+          from the file rather than suppressing in place, so
+          consumers do not need to distinguish "no service" from
+          "suppressed" (both are simply absent). Empirical min = 11,
+          max = 896,762 in the current vintage.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 11
+                inclusive: true
+      - name: total_services
+        description: |
+          Total Medicare services billed by the provider under this
+          HCPCS × place-of-service. Never null. Empirical min = 4.4
+          (fractional services occur for time-based CPT codes billed
+          in partial units), max = 6,486,401.
+        data_tests:
+          - not_null
+      - name: total_beneficiary_day_services
+        description: |
+          Distinct beneficiary-days on which the service was
+          rendered (never > `total_services` because same-day repeat
+          services collapse). Never null; empirical min = 11.
+        data_tests:
+          - not_null
+      - name: avg_submitted_charge
+        description: |
+          Provider's average submitted charge per service, in
+          dollars. Capped at $99,999.99 by the upstream reporting
+          format — treat the cap as right-censored, not real data.
+          Never null.
+        data_tests:
+          - not_null
+      - name: avg_medicare_allowed_amount
+        description: |
+          Average Medicare-allowed amount per service (payment plus
+          beneficiary cost-share), in dollars. Never null.
+        data_tests:
+          - not_null
+      - name: avg_medicare_payment_amount
+        description: |
+          Average dollars Medicare paid the provider per service.
+          Never null. Always at most `avg_medicare_allowed_amount`
+          — enforced by the model-level `dbt_utils.expression_is_true`
+          test.
+        data_tests:
+          - not_null
+      - name: avg_medicare_standardized_amount
+        description: |
+          Average payment per service normalized to remove regional
+          geographic-adjustment differences (comparable across
+          markets). Never null.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - npi
+              - hcpcs_code
+              - place_of_service
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              avg_medicare_payment_amount <= avg_medicare_allowed_amount
+      # Cross-file invariant: because CMS drops <=10-beneficiary
+      # rows from the service file rather than suppressing in place,
+      # the per-NPI sum of `total_services` is bounded above by the
+      # by-provider summary's `total_services`, and the count of
+      # distinct HCPCS codes per NPI is bounded above by the
+      # summary's `total_hcpcs_codes`. Both are empirically clean
+      # (0 violations across 1,207,473 shared NPIs in the RY26
+      # vintage) — mirrors the fct_prescriber_profile
+      # detail-vs-profile guard from Part D. Enforced by the
+      # singular test
+      # `dbt_tests/assert_physician_service_leq_provider_summary.sql`.
+
+  - name: stg_cms__medicare_physician_by_geography_and_service
+    description: |
+      Medicare Physician & Other Practitioners — by Geography and
+      Service (CMS data-api/v1 dataset
+      `6fea9d79-0129-4e4c-b1b8-23cd86a4f435`). Geography × HCPCS ×
+      place-of-service rollup of the by-provider-and-service file —
+      268,350 rows in the RY26 vintage carrying calendar-2024 data,
+      split 13,463 National / 254,887 State. The bulk CSV covers
+      the latest published data year only and carries no year
+      column, so any grain that includes a year must take the year
+      from the dataset vintage. CMS drops geography × HCPCS
+      combinations with 10 or fewer beneficiaries from the file
+      rather than suppressing in place, so `total_beneficiaries` is
+      never `NULL` and never below 11; every other measure column
+      is likewise non-null on every row. Averages are per-service.
+      Staging renames the abbreviated CMS columns
+      (`Rndrng_Prvdr_Geo_Lvl` → `geography_level`, `Tot_Srvcs` →
+      `total_services`, etc.) and empty geography strings become
+      `NULL`. Grain: (`geography_level`, `geography_code`,
+      `hcpcs_code`, `place_of_service`) — verified unique on all
+      268,350 rows.
+    columns:
+      - name: geography_level
+        description: |
+          `National` (13,463 rows — one summary line per HCPCS ×
+          place-of-service across the whole country, always with
+          `geography_code` `NULL`) or `State` (254,887 rows). Never
+          null. Grain column.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["National", "State"]
+      - name: geography_code
+        description: |
+          Two-character geography code. For `State` rows this is a
+          FIPS-style code — 50 states + DC plus five territories
+          (`60` AS, `66` GU, `69` MP, `72` PR, `78` VI) use 2-digit
+          numeric, plus five pseudo-codes for non-state buckets: `9A` Armed
+          Forces Central/South America (183 rows), `9B` Armed
+          Forces Europe (201), `9C` Armed Forces Pacific (329),
+          `9D` Unknown (219), `9E` Foreign Country (297). `NULL` on
+          all 13,463 `National` rows (by definition) and on 5
+          `State` rows in the current vintage that carry an
+          unmapped state. Grain column.
+      - name: geography_description
+        description: |
+          Human-readable name of the geography (`Alabama`,
+          `National`, `Armed Forces Pacific`). `NULL` only on the
+          same 5 unmapped `State` rows.
+      - name: hcpcs_code
+        description: |
+          Five-character HCPCS Level I (CPT) or Level II code.
+          Never null; always exactly five characters. Grain column.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_value_lengths_to_equal:
+              arguments:
+                value: 5
+      - name: hcpcs_description
+        description: "Long descriptor for the HCPCS code (raw `HCPCS_Desc`)."
+      - name: hcpcs_drug_indicator
+        description: |
+          `Y` Part-B drug HCPCS (15,435 rows), `N` medical service
+          (252,915). Never null.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["Y", "N"]
+      - name: place_of_service
+        description: |
+          `F` facility (140,017 rows) or `O` office / non-facility
+          (128,333). Never null. Grain column.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["F", "O"]
+      - name: total_rendering_providers
+        description: |
+          Distinct rendering NPIs that billed this HCPCS ×
+          place-of-service in the geography. Never null; empirical
+          min = 1, so unlike `total_beneficiaries` a single-provider
+          geography × HCPCS combination can appear as long as it
+          serves 11+ beneficiaries.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: total_beneficiaries
+        description: |
+          Distinct Medicare beneficiaries served in the geography
+          for this HCPCS × place-of-service. Never null and never
+          below 11 (CMS drops smaller cells from the file rather
+          than suppressing in place). Empirical range 11–a few
+          million across the National rows.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 11
+                inclusive: true
+      - name: total_services
+        description: "Total Medicare services billed. Never null."
+        data_tests:
+          - not_null
+      - name: total_beneficiary_day_services
+        description: |
+          Beneficiary-days of service in the geography. Never null.
+        data_tests:
+          - not_null
+      - name: avg_submitted_charge
+        description: |
+          Provider-population average submitted charge per service,
+          in dollars. Never null.
+        data_tests:
+          - not_null
+      - name: avg_medicare_allowed_amount
+        description: |
+          Average Medicare-allowed amount per service (payment plus
+          beneficiary cost-share), in dollars. Never null.
+        data_tests:
+          - not_null
+      - name: avg_medicare_payment_amount
+        description: |
+          Average dollars Medicare paid per service in the
+          geography. Never null. Always at most
+          `avg_medicare_allowed_amount` — enforced by the
+          model-level `dbt_utils.expression_is_true` test.
+        data_tests:
+          - not_null
+      - name: avg_medicare_standardized_amount
+        description: |
+          Average payment per service normalized to remove regional
+          geographic-adjustment differences. Never null.
+        data_tests:
+          - not_null
+    data_tests:
+      # Grain is unique after treating null geography_code as a
+      # distinct bucket (the 13,463 National rows plus 5 unmapped
+      # State rows).
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - geography_level
+              - geography_code
+              - hcpcs_code
+              - place_of_service
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: |
+              avg_medicare_payment_amount <= avg_medicare_allowed_amount
+
   - name: stg_cms__dataset_vintages
     description: |
       One row per extracted dataset with the upstream publication dates
