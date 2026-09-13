@@ -4,8 +4,8 @@ title: CMS Open Data
 
 Dashboards over the mart layer of the
 [cms-open-data](https://github.com/turnerluke/cms-open-data) warehouse:
-Medicare drug spending (Parts B and D) and hospital quality, modeled
-with dbt on DuckDB from CMS public datasets.
+Medicare drug spending (Parts B and D), Medicaid drug utilization, and
+hospital quality, modeled with dbt on DuckDB from CMS public datasets.
 
 ## Pages
 
@@ -35,6 +35,11 @@ with dbt on DuckDB from CMS public datasets.
   Marketplace qualified health plans: benchmark silver premiums by
   state and county, premium spread by metal level, issuer
   concentration, the CSR deductible cliff, and stand-alone dental.
+- [Medicaid drug utilization](/medicaid-drugs) — 2023 State Drug
+  Utilization Data: national totals, the fee-for-service vs managed-
+  care split (including which states carve pharmacy out of managed
+  care), top drugs and labelers by reimbursement, and a program-level
+  comparison against Medicare Part D and Part B.
 
 ## Warehouse coverage
 
@@ -167,6 +172,18 @@ select
     cost_sharing_rows,
     cast(counties as varchar) || ' counties'
 from cms.qhp_stats
+union all
+select
+    'fct_medicaid_drug_state',
+    drug_state_rows,
+    cast(states as varchar) || ' states + XX national'
+from cms.medicaid_stats
+union all
+select
+    'fct_medicaid_medicare_drug_spend',
+    program_compare_rows,
+    'CY2023 program compare'
+from cms.medicaid_stats
 order by mart
 ```
 
