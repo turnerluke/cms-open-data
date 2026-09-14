@@ -16,9 +16,9 @@
 #      shell / SPA-fallback / wrong-page response fails loudly.
 #
 # The route/sentinel table below is kept in sync by hand with the
-# evidence/pages/*.md files (six pages today, all shallow). Sentinels
-# are the frontmatter `title:` values — stable across data refreshes,
-# unlike any count/aggregate that would change week over week.
+# evidence/pages/*.md files (all shallow, one entry per top-level page).
+# Sentinels are the frontmatter `title:` values — stable across data
+# refreshes, unlike any count/aggregate that would change week over week.
 #
 # Runnable locally against the live site:
 #
@@ -33,7 +33,8 @@ set -euo pipefail
 
 # Retry tuning: 6 attempts with 5s → 30s exponential-ish backoff sums to
 # ~105s per route, well under a CDN's typical propagation window while
-# still bounding total runtime for six routes at a few minutes worst-case.
+# still bounding total runtime across the route table at a few minutes
+# worst-case.
 readonly MAX_ATTEMPTS=6
 readonly BACKOFFS=(5 10 15 20 25 30)
 
@@ -45,6 +46,8 @@ readonly ROUTES=(
     "/drug-spending/	Drug spending"
     "/home-health-hospice/	Home health and hospice"
     "/hospital-quality/	Hospital quality"
+    "/marketplace/	Marketplace (Qualified Health Plans)"
+    "/medicaid-drugs/	Medicaid drug utilization"
     "/nursing-homes/	Nursing homes"
     "/prescribers/	Prescribers"
 )
