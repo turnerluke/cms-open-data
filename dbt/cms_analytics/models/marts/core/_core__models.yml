@@ -1389,3 +1389,336 @@ models:
           `dim_qhp_plan.as_of`. Constant across rows.
         data_tests:
           - not_null
+
+  - name: dim_dialysis_facility
+    description: |
+      One row per Medicare-certified dialysis facility (CCN),
+      conformed from `stg_cms__dialysis_facility_listing`. Keeps
+      directory attributes (name, split address, county, telephone),
+      ownership and chain classification, service-offering flags,
+      station count, certification date, and the headline five-star
+      overall rating. The clinical quality measures shipped with this
+      file — 27 measure codes across 21 measure families
+      (SMR, SHR, SRR, STrR, FYSWR, PPPW, SEDR, ED30, SMOSR,
+      SIR, fistula, adult / pediatric HD & PD Kt/V, hemoglobin,
+      hypercalcemia, serum-phosphorus bands, long-term catheter,
+      NPCR, HCP vaccination) — live in `fct_dialysis_quality`. Grain:
+      `ccn` — 7,490 facilities in the 2026-08 vintage. CCNs share no
+      values with the hospital / nursing-home / hospice / home-health
+      or LTCH / IRF namespaces in this warehouse (0 CCNs of 7,490
+      overlap `dim_hospital`).
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number. Primary key — one row per
+          facility. Every dialysis CCN in the current vintage is six
+          digits.
+        data_tests:
+          - not_null
+          - unique
+      - name: facility_name
+        description: "Dialysis facility name."
+      - name: esrd_network
+        description: |
+          ESRD Network 1-18, kept as string. The Networks are CMS's
+          regional quality-improvement organizations for dialysis
+          providers; every facility is assigned to exactly one.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18"]
+      - name: address_line_1
+        description: "Primary street-address line."
+      - name: address_line_2
+        description: |
+          Secondary address line (suite, floor). Null for the ~90%
+          of facilities with no second line.
+      - name: city
+        description: "City of the facility address."
+      - name: state
+        description: "Two-letter state or territory abbreviation."
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros.
+      - name: county
+        description: "County or parish of the facility address."
+      - name: telephone_number
+        description: "Facility telephone number."
+      - name: is_for_profit
+        description: |
+          `TRUE` when CMS classifies the facility as for-profit,
+          `FALSE` when non-profit. Every row is populated in the
+          current vintage.
+        data_tests:
+          - not_null
+      - name: is_chain_owned
+        description: |
+          `TRUE` when the facility belongs to a dialysis chain
+          organization (staging invariant: exactly when
+          `chain_organization <> 'Independent'`).
+        data_tests:
+          - not_null
+      - name: chain_organization
+        description: |
+          Chain-organization name (e.g. `DAVITA`, `FRESENIUS
+          MEDICAL CARE`). The literal `Independent` appears iff the
+          facility is not chain-owned.
+        data_tests:
+          - not_null
+      - name: offers_incenter_hemodialysis
+        description: "`TRUE` when the facility offers in-center hemodialysis."
+      - name: offers_peritoneal_dialysis
+        description: "`TRUE` when the facility offers peritoneal dialysis."
+      - name: offers_home_hemodialysis_training
+        description: "`TRUE` when the facility offers home-hemodialysis training."
+      - name: offers_late_shift
+        description: |
+          `TRUE` when the facility offers a late (post-5pm) shift for
+          in-center hemodialysis patients.
+      - name: number_of_dialysis_stations
+        description: |
+          Reported number of dialysis stations at the facility.
+          Populated on every row in the current vintage.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: certification_date
+        description: |
+          Date the facility was first Medicare-certified, parsed at
+          staging from the CMS `YYYY-MM-DD` string.
+        data_tests:
+          - not_null
+      - name: five_star
+        description: |
+          CMS overall five-star rating, 1-5. Null for 491 facilities
+          where CMS suppressed the rating (availability code in
+          `201`, `258`, `260`).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: as_of
+        description: |
+          Snapshot vintage: the upstream `modified` date CMS
+          reported for the Dialysis Facility Listing file at
+          capture time (from `stg_cms__dataset_vintages`). Constant
+          across rows — the whole dimension comes from one snapshot.
+        data_tests:
+          - not_null
+
+  - name: dim_irf
+    description: |
+      One row per Medicare-certified Inpatient Rehabilitation
+      Facility (`IRF`), conformed from
+      `stg_cms__inpatient_rehabilitation_facility_general`. Keeps
+      directory attributes (name, split address, county, telephone,
+      CMS region), ownership category, and certification date, plus
+      a derived `facility_type` split (`Freestanding` vs
+      `Hospital unit`) based on CCN encoding. Grain: `ccn` — 1,222
+      facilities in the 2026-08 vintage.
+
+      **CCN encoding.** IRF CCNs are six alphanumeric characters:
+      410 rows are freestanding rehab hospitals whose CCN is fully
+      numeric, and 812 rows are IRF units embedded in an acute
+      hospital, encoded with a letter in position 3 (`T` for
+      standard rehab units — 805 rows; `R` for critical-access
+      rehab units — 7 rows). The `T`/`R` unit CCNs are derived from
+      the parent hospital's CCN by substituting position 3, so a
+      unit CCN like `10T001` corresponds to parent hospital
+      `100001`. Replacing position 3 with `0` recovers a
+      `dim_hospital` match for 762 of the 812 unit CCNs in the
+      current vintage; 0 of the 410 freestanding-numeric CCNs
+      overlap `dim_hospital` (freestanding IRFs use a distinct CCN
+      series that does not collide with acute-care hospital CCNs).
+      No relationships test is asserted against `dim_hospital`
+      because 50 IRF unit rows fail the pos-3-normalization match,
+      and freestanding IRFs never join.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number, six alphanumeric characters.
+          Primary key — one row per facility.
+        data_tests:
+          - not_null
+          - unique
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[0-9A-Z]{6}$"
+      - name: provider_name
+        description: "IRF provider name."
+        data_tests:
+          - not_null
+      - name: address_line_1
+        description: "Primary street-address line."
+      - name: address_line_2
+        description: |
+          Secondary address line (suite, floor). Null for the ~94%
+          of facilities that ship the `-` placeholder upstream.
+      - name: city
+        description: "City of the facility address."
+      - name: state
+        description: "Two-letter state or territory abbreviation."
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros.
+      - name: county
+        description: "County or parish of the facility address."
+      - name: telephone_number
+        description: "Facility telephone number."
+      - name: cms_region
+        description: |
+          CMS operational region, `1`-`10` as a string.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+      - name: ownership_type
+        description: |
+          CMS ownership category: `Non-profit` (~47%), `For profit`
+          (~45%), `Government` (~8%), or `Physician` (<1%).
+          Populated on every row in the current vintage.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Non-profit
+                  - For profit
+                  - Government
+                  - Physician
+      - name: certification_date
+        description: |
+          Date the facility was first Medicare-certified, parsed at
+          staging from the CMS `MM/DD/YYYY` string.
+        data_tests:
+          - not_null
+      - name: facility_type
+        description: |
+          Derived from the CCN encoding: `Freestanding` when the
+          CCN is fully numeric (410 rows), `Hospital unit` when
+          position 3 is `T` or `R` (812 rows).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - Freestanding
+                  - Hospital unit
+      - name: as_of
+        description: |
+          Snapshot vintage: the upstream `modified` date CMS
+          reported for the IRF General Information file at capture
+          time (from `stg_cms__dataset_vintages`).
+        data_tests:
+          - not_null
+
+  - name: dim_ltch
+    description: |
+      One row per Medicare-certified Long-Term Care Hospital
+      (`LTCH`), conformed from
+      `stg_cms__long_term_care_hospital_general`. Keeps directory
+      attributes (name, split address, county, telephone, CMS
+      region), ownership category, certification date, and total
+      bed count. Grain: `ccn` — 311 hospitals in the 2026-08
+      vintage. Every LTCH CCN in the current vintage is six digits
+      (no letter-suffixed CCNs), reflecting that LTCHs are
+      freestanding facilities rather than units embedded in a host
+      acute hospital.
+
+      **CCN reconciliation.** 5 of 311 LTCH CCNs also appear in
+      `dim_hospital` (i.e. CMS lists these facilities in both the
+      acute-care hospital file and the LTCH file — likely dual
+      certifications or facilities transitioning between service
+      types). The remaining 306 LTCH CCNs are exclusive to this
+      dim. No relationships test is asserted because the two files
+      genuinely represent different populations.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number, six digits. Primary key — one
+          row per facility.
+        data_tests:
+          - not_null
+          - unique
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[0-9]{6}$"
+      - name: provider_name
+        description: "LTCH provider name."
+        data_tests:
+          - not_null
+      - name: address_line_1
+        description: "Primary street-address line."
+      - name: address_line_2
+        description: |
+          Secondary address line (suite, floor). Null in every row
+          of the current vintage (the file ships `-` in every
+          `address_line_2` cell; nulled at staging).
+      - name: city
+        description: "City of the facility address."
+      - name: state
+        description: "Two-letter state or territory abbreviation."
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros.
+      - name: county
+        description: "County or parish of the facility address."
+      - name: telephone_number
+        description: "Facility telephone number."
+      - name: cms_region
+        description: |
+          CMS operational region, `1`-`10` as a string.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+      - name: ownership_type
+        description: |
+          CMS ownership category: `For profit` (~70%),
+          `Non-profit` (~26%), `Government` (~4%), `Tribal` (<1%),
+          or `Physician` (<1%). Populated on every row in the
+          current vintage.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - For profit
+                  - Non-profit
+                  - Government
+                  - Tribal
+                  - Physician
+      - name: certification_date
+        description: |
+          Date the facility was first Medicare-certified, parsed at
+          staging from the CMS `MM/DD/YYYY` string.
+        data_tests:
+          - not_null
+      - name: total_number_of_beds
+        description: |
+          Total staffed / certified beds at the facility. 5 of 311
+          rows carry the file's `-` placeholder upstream and arrive
+          NULL; every populated row falls in the range 9-760.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: as_of
+        description: |
+          Snapshot vintage: the upstream `modified` date CMS
+          reported for the LTCH General Information file at capture
+          time (from `stg_cms__dataset_vintages`).
+        data_tests:
+          - not_null
