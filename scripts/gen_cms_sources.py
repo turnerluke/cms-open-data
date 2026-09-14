@@ -6,10 +6,9 @@ one `- name: cms_<key>` block per registry row, with the row's
 (``name: cms_raw`` + ``external_location`` meta) is fixed and identical
 across every emit.
 
-A few Dagster `cms_*` assets bypass the registry (custom config or sweep
-shape that the source-type rules don't cover yet). Those live in
-``_EXTRA_SOURCES`` below so the dbt sources file still lists every
-asset that lands Parquet under ``data/raw/``.
+Hand-written Dagster assets (e.g. the NPPES sweep) live in the registry
+too, under ``source = "custom"``; that variant carries no fetch config
+but still contributes its name+description here.
 
 Run with ``--write`` to overwrite the dbt sources file; default is
 stdout so the sync test under `tests/` can diff against the on-disk
@@ -22,13 +21,8 @@ import argparse
 from pathlib import Path
 import sys
 import textwrap
-from typing import TYPE_CHECKING
 
 from cms_api import DatasetSpec, load_registry
-
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
 
 
 # Repo root -> this file's parent dir's parent dir.
@@ -58,25 +52,6 @@ sources:
     tables:
 """
 
-# Hand-written Dagster assets not driven by `datasets.toml`. Each entry
-# is ``(cms_<key>, description)``. Inserted in registry order between
-# the matching siblings; see ``_assemble_table_blocks`` for how the
-# position is chosen. TODO: collapse these into the registry once
-# `DatasetSpec` grows a source type that fits their config shape.
-_EXTRA_SOURCES: tuple[tuple[str, str, str], ...] = (
-    # name, description, after_key (insert immediately after this registry key)
-    (
-        "cms_nppes_providers",
-        (
-            "NPPES organizational providers (NPI-2), swept state-by-state "
-            "from the NPI Registry by the `cms_nppes_providers` Dagster "
-            "asset. Not exhaustive: NPPES caps any single query at 1,200 "
-            "reachable rows."
-        ),
-        "healthcare_gov_articles",
-    ),
-)
-
 
 def _render_block(name: str, description: str) -> str:
     """Emit one ``- name: <name>`` block with a literal-scalar description."""
@@ -90,26 +65,10 @@ def _render_block(name: str, description: str) -> str:
     return f"{_TABLE_INDENT}- name: {name}\n{_FIELD_INDENT}description: |\n{body}\n"
 
 
-def _assemble_table_blocks(specs: Iterable[DatasetSpec]) -> str:
-    """Interleave registry rows and ``_EXTRA_SOURCES`` in file order."""
-    extras_by_after = {after_key: (name, desc) for name, desc, after_key in _EXTRA_SOURCES}
-    out: list[str] = []
-    for spec in specs:
-        out.append(_render_block(f"cms_{spec.key}", spec.description))
-        extra = extras_by_after.pop(spec.key, None)
-        if extra is not None:
-            name, desc = extra
-            out.append(_render_block(name, desc))
-    if extras_by_after:
-        unmatched = ", ".join(extras_by_after)
-        msg = f"_EXTRA_SOURCES references unknown registry keys: {unmatched}"
-        raise ValueError(msg)
-    return "".join(out)
-
-
 def render(specs: list[DatasetSpec]) -> str:
     """Render the full `_cms__sources.yml` body for ``specs``."""
-    return _HEADER + _assemble_table_blocks(specs)
+    blocks = "".join(_render_block(f"cms_{spec.key}", spec.description) for spec in specs)
+    return _HEADER + blocks
 
 
 def main(argv: list[str] | None = None) -> int:

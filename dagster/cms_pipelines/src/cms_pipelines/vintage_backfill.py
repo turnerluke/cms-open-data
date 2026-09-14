@@ -39,8 +39,9 @@ def backfill_vintage_sidecars(raw_root: Path) -> list[str]:
 
     Registry datasets with no landed Parquet are skipped — a sidecar
     without data would put phantom rows in the warehouse's vintage table.
-    The hand-written NPPES sweep (not a registry row) gets a
-    capture-time-only sidecar when its extract exists.
+    The NPPES sweep (a `custom`-source registry row whose asset stays
+    hand-written) gets a capture-time-only sidecar when its extract
+    exists.
 
     Returns:
         The asset names whose sidecars were written, in registry order.
@@ -50,6 +51,12 @@ def backfill_vintage_sidecars(raw_root: Path) -> list[str]:
     for spec in load_registry():
         asset_name = f"cms_{spec.key}"
         if not _has_extract(raw_root, asset_name):
+            continue
+        # `custom`-source rows (e.g. NPPES) have no upstream publisher
+        # metadata to fetch; the hand-written module owns their vintage
+        # shape. Handled after the loop so the source_family stays the
+        # asset-specific family name rather than "custom".
+        if spec.source == "custom":
             continue
         capture_dataset_vintage(spec, raw_root=raw_root, asset_name=asset_name)
         written.append(asset_name)

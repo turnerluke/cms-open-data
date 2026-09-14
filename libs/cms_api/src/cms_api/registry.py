@@ -31,6 +31,7 @@ SourceLiteral = Literal[
     "dkan_medicaid_bulk",
     "dkan_open_payments_bulk",
     "dkan_healthcare_gov_zip",
+    "custom",
 ]
 
 
@@ -40,6 +41,12 @@ SourceLiteral = Literal[
 # where it's an optional year selector — Medicaid, Open Payments, and
 # healthcare.gov QHP bulk rows pick a year at the dataset-id level
 # (each plan year is a separate UUID), so ``year`` stays forbidden there.
+#
+# ``custom`` is the escape hatch for Dagster assets that don't fit any
+# fetch-driven variant (e.g. the NPPES state-by-state sweep). The row
+# still contributes name+description to the dbt sources file, but
+# carries no fetch config and produces no auto-generated asset — the
+# asset lives as a hand-written module under `cms_pipelines/defs/cms/`.
 _SOURCE_FIELD_RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "socrata": (("dataset_id",), ("path", "year")),
     "healthcare_gov": (("path",), ("dataset_id", "year")),
@@ -49,6 +56,7 @@ _SOURCE_FIELD_RULES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "dkan_medicaid_bulk": (("dataset_id",), ("path", "year")),
     "dkan_open_payments_bulk": (("dataset_id",), ("path", "year")),
     "dkan_healthcare_gov_zip": (("dataset_id",), ("path", "year")),
+    "custom": ((), ("dataset_id", "path", "year")),
 }
 
 

@@ -95,7 +95,9 @@ def _build_asset(spec: DatasetSpec) -> AssetsDefinition:
 # at import time from the registry.
 #
 # Sources without a fetcher in `_FETCHERS` (e.g. `dkan_data_api_bulk`,
-# which is handled in `bulk_csv_assets.py`) are intentionally skipped.
+# which is handled in `bulk_csv_assets.py`, or `custom`, which flags a
+# hand-written asset like `cms_nppes_providers`) are intentionally
+# skipped so we don't emit a duplicate auto-generated asset.
 for _spec in load_registry():
     if _spec.source not in _FETCHERS:
         continue
