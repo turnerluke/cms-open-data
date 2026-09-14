@@ -68,6 +68,7 @@ _NON_REGISTRY_ASSET_SOURCES = {
     "dkan_open_payments_bulk",
     "dkan_provider_bulk",
     "dkan_healthcare_gov_zip",
+    "custom",
 }
 
 
@@ -78,7 +79,8 @@ def test_one_asset_emitted_per_registry_row() -> None:
     checked there instead: bulk-CSV (``dkan_data_api_bulk``,
     ``dkan_medicaid_bulk``, ``dkan_open_payments_bulk``,
     ``dkan_provider_bulk``) on ``bulk_csv_assets``; QHP ZIP-XLSX
-    (``dkan_healthcare_gov_zip``) on ``qhp_zip_assets``.
+    (``dkan_healthcare_gov_zip``) on ``qhp_zip_assets``. ``custom`` rows
+    (e.g. NPPES) are hand-written modules and don't auto-generate here.
     """
     for spec in load_registry():
         if spec.source in _NON_REGISTRY_ASSET_SOURCES:

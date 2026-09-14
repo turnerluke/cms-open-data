@@ -288,6 +288,64 @@ def test_socrata_spec_rejects_year() -> None:
         )
 
 
+def test_custom_spec_accepts_no_fetch_config() -> None:
+    """A `custom` row needs neither dataset_id nor path — it's a hand-written asset."""
+    spec = DatasetSpec.model_validate(
+        {
+            "key": "hand_written",
+            "source": "custom",
+            "description": "Hand-written Dagster asset.",
+            "group": "cms_raw",
+        },
+    )
+    assert spec.source == "custom"
+    assert spec.dataset_id is None
+    assert spec.path is None
+    assert spec.year is None
+
+
+def test_custom_spec_rejects_dataset_id() -> None:
+    """A `custom` row must not carry fetch config — dataset_id is forbidden."""
+    with pytest.raises(ValueError, match="must not set"):
+        DatasetSpec.model_validate(
+            {
+                "key": "weird_custom",
+                "source": "custom",
+                "dataset_id": "abcd-1234",
+                "description": "x",
+                "group": "cms_raw",
+            },
+        )
+
+
+def test_custom_spec_rejects_path() -> None:
+    """A `custom` row must not carry fetch config — path is forbidden."""
+    with pytest.raises(ValueError, match="must not set"):
+        DatasetSpec.model_validate(
+            {
+                "key": "weird_custom_path",
+                "source": "custom",
+                "path": "/api/x.json",
+                "description": "x",
+                "group": "cms_raw",
+            },
+        )
+
+
+def test_custom_spec_rejects_year() -> None:
+    """A `custom` row must not carry fetch config — year is forbidden."""
+    with pytest.raises(ValueError, match="must not set"):
+        DatasetSpec.model_validate(
+            {
+                "key": "weird_custom_year",
+                "source": "custom",
+                "year": 2024,
+                "description": "x",
+                "group": "cms_raw",
+            },
+        )
+
+
 def test_unknown_source_rejected() -> None:
     """Sources outside the configured Literal are rejected."""
     with pytest.raises(ValueError, match="source"):

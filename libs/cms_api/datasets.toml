@@ -2,7 +2,10 @@
 #
 # One [[dataset]] entry per Dagster asset. The generator in
 # `dagster/cms_pipelines/src/cms_pipelines/defs/cms/registry_assets.py`
-# emits one `@asset` named `cms_<key>` per row here.
+# emits one `@asset` named `cms_<key>` per row here, except for rows
+# with `source = "custom"` — those flag a hand-written asset module
+# under `cms_pipelines/defs/cms/` and only contribute their
+# name+description to the dbt sources file.
 #
 # `description` is also the source of truth for the dbt sources file at
 # `dbt/cms_analytics/models/staging/cms/_cms__sources.yml` — that file is
@@ -17,6 +20,8 @@
 #   - healthcare_gov: path (e.g. "/api/glossary.json")
 #   - dkan_provider_data: dataset_id (Provider Data Catalog UUID/4x4)
 #   - dkan_healthcare_gov_zip: dataset_id (QHP Landscape ZIP-XLSX UUID)
+#   - custom: none — hand-written asset, registry only carries the
+#     description for the dbt sources file
 # Cross-field validation lives in `cms_api.registry.DatasetSpec`.
 
 [[dataset]]
@@ -38,6 +43,17 @@ key = "healthcare_gov_articles"
 source = "healthcare_gov"
 path = "/api/articles.json"
 description = "Healthcare.gov articles. Landed by the `cms_healthcare_gov_articles` Dagster asset."
+group = "cms_raw"
+
+# The NPPES sweep is hand-written (see `cms_pipelines/defs/cms/nppes.py`)
+# because the NPI Registry API has no bulk export — it's swept state by
+# state with a 1,200-row cap per query. The `custom` source type carries
+# no fetch config; this row exists only so the dbt sources file lists
+# the asset.
+[[dataset]]
+key = "nppes_providers"
+source = "custom"
+description = "NPPES organizational providers (NPI-2), swept state-by-state from the NPI Registry by the `cms_nppes_providers` Dagster asset. Not exhaustive: NPPES caps any single query at 1,200 reachable rows."
 group = "cms_raw"
 
 # --- Provider Data Catalog (Care Compare) -----------------------------------
