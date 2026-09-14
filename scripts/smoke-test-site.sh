@@ -50,6 +50,7 @@ readonly ROUTES=(
     "/medicaid-drugs/	Medicaid drug utilization"
     "/nursing-homes/	Nursing homes"
     "/prescribers/	Prescribers"
+    "/specialty-facilities/	Specialty facilities"
 )
 
 usage() {
