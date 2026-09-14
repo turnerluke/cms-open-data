@@ -1332,3 +1332,183 @@ models:
                   + weighted_efficiency_and_cost_reduction_score
                 ) - total_performance_score
               ) < 1e-6
+
+  - name: fct_dialysis_quality
+    description: |
+      Dialysis facility quality measures in long format, one row per
+      (`ccn`, `measure_code`). Grain: (`ccn`, `measure_code`) —
+      7,490 facilities × 27 measure codes = 202,230 rows. Every
+      facility contributes every measure code (whether or not the
+      measure is reported), so measure coverage per facility stays
+      analyzable.
+
+      **Measure design.** The source ships each measure family in
+      its own set of wide columns (score, availability code,
+      patient count / patient-months, CI bounds). Some measure
+      families ship multiple values sharing one availability code /
+      denominator — Kt/V is split by modality (adult / pediatric ×
+      HD / PD, four codes) and serum-phosphorus by band (five
+      codes). Each such value gets its own `measure_code` so
+      `score_numeric` semantics stay unambiguous.
+
+      **Suppression convention.** `availability_code = '001'`
+      iff CMS reported a real value for the measure at the
+      facility. Non-`001` codes correspond to CMS suppression
+      reasons (too few patients, not eligible, disclosure limits,
+      etc.); the numeric score is NULL on suppressed rows. The
+      staging model verifies this invariant for five-star, SMR, and
+      SIR at build time. `is_reported` is a convenience boolean
+      that surfaces `availability_code = '001'`.
+
+      **Denominator units.** SMR / SHR / STrR / FYSWR / PPPW /
+      SEDR / fistula / long-term catheter / NPCR denominators are
+      patients; SRR / ED30 are hospitalizations; Kt/V and
+      hypercalcemia / serum-phosphorus / long-term catheter / NPCR
+      denominators are patient-months (CMS reports rates over
+      patient-months for those metrics). SIR / five-star / HCP
+      vaccination / hemoglobin ship no per-row denominator upstream.
+      `denominator_unit` records the unit so aggregations across
+      measures stay honest.
+
+      Facility name / address / classification attributes are not
+      inlined; join `dim_dialysis_facility` on `ccn` for them.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number of the dialysis facility.
+          Foreign key to `dim_dialysis_facility`, enforced at
+          error severity — both the fact and the dim share the
+          same Care Compare snapshot.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_dialysis_facility')
+                field: ccn
+      - name: measure_code
+        description: |
+          Short code identifying the clinical measure (e.g. `smr`,
+          `sir`, `fistula`, `adult_hd_ktv`,
+          `serum_phosphorus_lt_3_5`). See the model description for
+          the multi-code families.
+        data_tests:
+          - not_null
+      - name: measure_name
+        description: |
+          Human-readable measure description.
+        data_tests:
+          - not_null
+      - name: category
+        description: |
+          CMS categorical bucket for the measure where the source
+          publishes one (e.g. `As Expected`, `Better than Expected`,
+          `Worse than Expected` for the standardized-ratio
+          measures). NULL for measures without a categorical
+          companion column (five-star, HCP vaccination, Kt/V,
+          hemoglobin, hypercalcemia, phosphorus bands, long-term
+          catheter, NPCR).
+      - name: availability_code
+        description: |
+          CMS data-availability code as text: `001` when the
+          measure is reported, and one of `199`, `201`, `256`,
+          `258`, `260`, `280`, ... when CMS suppresses the score.
+          Kept verbatim so consumers can distinguish suppression
+          reasons.
+      - name: is_reported
+        description: |
+          `TRUE` iff `availability_code = '001'`, i.e. the measure
+          is a real published value for this facility. Convenience
+          derivation.
+        data_tests:
+          - not_null
+      - name: score_numeric
+        description: |
+          Parsed numeric score. Value semantics vary by
+          `measure_code` (rate, ratio, or percentage — see the
+          measure_name for units); only comparable **within** a
+          code. NULL on every suppressed row (verified by the
+          staging suppression tests for five-star, SMR, and SIR).
+      - name: ci_upper
+        description: |
+          Upper confidence bound for `score_numeric` where CMS
+          publishes one (SMR / SHR / STrR / SEDR / ED30 / SIR /
+          fistula use the 97.5% bound; FYSWR / PPPW use the 95%
+          bound; SMOSR carries an unlabeled facility-CL upper).
+          NULL for measures without a published CI (five-star, HCP
+          vaccination, Kt/V, hemoglobin, hypercalcemia, phosphorus
+          bands, long-term catheter, NPCR).
+      - name: ci_lower
+        description: |
+          Lower confidence bound for `score_numeric`, paired with
+          `ci_upper`.
+      - name: denominator
+        description: |
+          Reported denominator for the measure (patients,
+          hospitalizations, or patient-months — see
+          `denominator_unit`). NULL for measures without a per-row
+          denominator upstream.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: denominator_unit
+        description: |
+          Unit of `denominator`: `patients`, `hospitalizations`, or
+          `patient_months`. NULL when `denominator` is NULL for
+          every row of this measure.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - patients
+                  - hospitalizations
+                  - patient_months
+      - name: period_text
+        description: |
+          Raw measurement window as CMS ships it, in the
+          `%d%b%Y-%d%b%Y` format (e.g. `01Jan2021-31Dec2024`).
+          Constant within a measure family across all facilities in
+          a given vintage, kept verbatim for round-trip parity with
+          the source file.
+        data_tests:
+          - not_null
+      - name: period_start_date
+        description: |
+          First day of the measurement period, parsed from
+          `period_text` with `try_strptime` (returns NULL rather
+          than raising on any malformed value a future publish
+          might introduce). Every value in the current vintage
+          parses cleanly.
+        data_tests:
+          - not_null
+      - name: period_end_date
+        description: |
+          Last day of the measurement period, parsed from
+          `period_text`.
+        data_tests:
+          - not_null
+      - name: as_of
+        description: |
+          Snapshot vintage of the source dataset: the upstream
+          `modified` date CMS reported for
+          `dialysis_facility_listing` (from
+          `stg_cms__dataset_vintages`).
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - ccn
+              - measure_code
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "period_start_date <= period_end_date"
+      # `is_reported` (i.e. availability_code = '001') implies a
+      # non-null score. NULL scores are permitted on suppressed
+      # rows; a reported row with a NULL score would be a source
+      # inconsistency.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "not is_reported or score_numeric is not null"
