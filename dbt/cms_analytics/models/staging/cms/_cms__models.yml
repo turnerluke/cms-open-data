@@ -4352,3 +4352,363 @@ models:
               or abs(total_amount_reimbursed
                      - (medicaid_amount_reimbursed
                         + non_medicaid_amount_reimbursed)) < 0.01
+
+  - name: stg_cms__inpatient_rehabilitation_facility_general
+    description: |
+      Inpatient Rehabilitation Facility — General Information from
+      CMS Care Compare (DKAN dataset `7t8x-u3ir`). One row per
+      Medicare-certified IRF: the 2026-08 vintage carries 1,222
+      facilities across 52 state / territory codes with directory
+      columns (name, split address, city/state/ZIP, county,
+      telephone), CMS region 1–10, ownership type, and
+      Medicare-certification date. Every raw column arrives as text;
+      `certification_date` is `MM/DD/YYYY` and is parsed with
+      `try_strptime`; missing values arrive as a literal `-`
+      placeholder and become `NULL`. Grain: `ccn`.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number, conformed as `upper(trim())`.
+          IRF CCNs are six alphanumeric characters: 410 rows are
+          freestanding rehab hospitals whose CCN is fully numeric,
+          and 812 rows are IRF units embedded in an acute hospital,
+          encoded with a letter in position 3 (`T` for standard rehab
+          units — 805 rows; `R` for critical-access rehab units — 7
+          rows). Primary key — one row per facility.
+        data_tests:
+          - not_null
+          - unique
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[0-9A-Z]{6}$"
+      - name: provider_name
+        description: "IRF provider name (trimmed)."
+        data_tests:
+          - not_null
+      - name: address_line_1
+        description: "Primary street address (trimmed)."
+      - name: address_line_2
+        description: |
+          Secondary address line (e.g. suite / unit). The file marks
+          missing values with a literal `-` placeholder (1,153 of
+          1,222 rows); both `-` and blanks become `NULL`, leaving 69
+          rows with a real value.
+      - name: city
+        description: "City of the IRF address (raw `citytown`, trimmed)."
+      - name: state
+        description: "USPS state / territory code (52 distinct values)."
+        data_tests:
+          - not_null
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros (raw `zip_code`).
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{5}$'
+      - name: county
+        description: "County or parish (raw `countyparish`, trimmed)."
+      - name: telephone_number
+        description: |
+          Facility telephone number. 4 rows carry the file's `-`
+          placeholder; both `-` and blanks become `NULL`.
+      - name: cms_region
+        description: |
+          CMS regional office number (`1`–`10`). Kept as a string
+          because it is a categorical identifier.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+      - name: ownership_type
+        description: "Ownership category, verbatim."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["Non-profit", "For profit", "Government", "Physician"]
+      - name: certification_date
+        description: |
+          Date CMS certified the IRF for Medicare, parsed from
+          `MM/DD/YYYY` via `try_strptime` to `date` (NULL rather
+          than an error on any malformed future value). Populated
+          for every row in the current vintage; the earliest
+          certification is in 1983.
+        data_tests:
+          - not_null
+
+  - name: stg_cms__long_term_care_hospital_general
+    description: |
+      Long-Term Care Hospital — General Information from CMS Care
+      Compare (DKAN dataset `azum-44iv`). One row per
+      Medicare-certified LTCH: the 2026-08 vintage carries 311
+      facilities across 47 states with directory columns (name,
+      split address, city/state/ZIP, county, telephone), CMS region
+      1–10, ownership type, Medicare-certification date, and total
+      bed count. Every raw column arrives as text;
+      `certification_date` is `MM/DD/YYYY` and is parsed with
+      `try_strptime`; missing values arrive as a literal `-`
+      placeholder and become `NULL`. Grain: `ccn`.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number, conformed as `upper(trim())`.
+          Every LTCH CCN in the current vintage is six digits (no
+          letter-suffixed CCNs), reflecting that long-term care
+          hospitals are freestanding rather than units embedded in a
+          host acute hospital. Primary key — one row per facility.
+        data_tests:
+          - not_null
+          - unique
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[0-9]{6}$"
+      - name: provider_name
+        description: "LTCH provider name (trimmed)."
+        data_tests:
+          - not_null
+      - name: address_line_1
+        description: "Primary street address (trimmed)."
+      - name: address_line_2
+        description: |
+          Secondary address line. The file marks missing values with
+          a literal `-` placeholder — every one of the 311 rows in
+          the current vintage — so the column is entirely `NULL`
+          after cleaning; kept for forward compatibility.
+      - name: city
+        description: "City of the LTCH address (raw `citytown`, trimmed)."
+      - name: state
+        description: "USPS state code (47 distinct values)."
+        data_tests:
+          - not_null
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros (raw `zip_code`).
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{5}$'
+      - name: county
+        description: "County or parish (raw `countyparish`, trimmed)."
+      - name: telephone_number
+        description: "Facility telephone number (trimmed)."
+      - name: cms_region
+        description: |
+          CMS regional office number (`1`–`10`). Kept as a string
+          because it is a categorical identifier.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]
+      - name: ownership_type
+        description: "Ownership category, verbatim."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["For profit", "Non-profit", "Government", "Tribal", "Physician"]
+      - name: certification_date
+        description: |
+          Date CMS certified the LTCH for Medicare, parsed from
+          `MM/DD/YYYY` via `try_strptime` to `date` (NULL rather
+          than an error on any malformed future value). Populated
+          for every row in the current vintage.
+        data_tests:
+          - not_null
+      - name: total_number_of_beds
+        description: |
+          Certified bed count (`try_cast` to `int`). Populated for
+          306 of 311 rows in the current vintage; the other 5 carry
+          the file's `-` placeholder, which `try_cast` turns into
+          `NULL`. Observed range 9–760 (mean ~71).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+
+  - name: stg_cms__dialysis_facility_listing
+    description: |
+      Dialysis Facility Listing from CMS Care Compare (DKAN dataset
+      `23ew-n7w9`). One row per Medicare-certified dialysis
+      facility: the 2026-08 vintage carries 7,490 facilities across
+      56 state / territory codes, with directory columns, ownership
+      and chain classification, service-offering flags, a
+      five-star overall rating, and 20+ quality measures each
+      accompanied by a data-availability code and (for most)
+      confidence-interval columns. Every raw column arrives as text;
+      `certification_date` is `YYYY-MM-DD` so `try_cast(... as date)`
+      works directly (unlike the IRF / LTCH files which use
+      `MM/DD/YYYY`). The `*_date` file-scope columns are
+      measurement windows shared across every row (e.g. `five_star`
+      is scored over `01Jan2021-31Dec2024`); they are kept verbatim
+      as `*_period` strings, matching how hospice-quality staging
+      handles `measure_date_range`. Every measure follows the same
+      suppression convention — the paired `*_data_availability_code`
+      is `001` when the measure is reported and non-`001` when CMS
+      suppresses the score; the numeric measure is `NULL` in every
+      suppressed row (verified for SMR, SIR, and adult HD Kt/V).
+      Grain: `ccn`.
+    columns:
+      - name: ccn
+        description: |
+          CMS Certification Number, conformed as `upper(trim())`.
+          Every dialysis CCN in the current vintage is six digits.
+          Primary key — one row per facility.
+        data_tests:
+          - not_null
+          - unique
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[0-9]{6}$"
+      - name: facility_name
+        description: "Dialysis facility name (trimmed)."
+        data_tests:
+          - not_null
+      - name: esrd_network
+        description: |
+          ESRD Network identifier (`1`–`18`), kept as a string
+          because it is a categorical identifier. Empty strings
+          become `NULL`.
+      - name: state
+        description: |
+          USPS state / territory code (56 distinct values, covering
+          the 50 states, DC, and the U.S. territories including
+          Guam, American Samoa, and the Northern Mariana Islands).
+        data_tests:
+          - not_null
+      - name: zip5
+        description: |
+          Five-digit ZIP code, kept as a string to preserve leading
+          zeros (raw `zip_code`).
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: '^\d{5}$'
+      - name: is_for_profit
+        description: |
+          `TRUE` when `profit_or_nonprofit = 'Profit'` (6,706 rows),
+          `FALSE` for `'Non-profit'` (784 rows). No other values
+          are present in the current vintage.
+        data_tests:
+          - not_null
+      - name: is_chain_owned
+        description: |
+          `TRUE` when the facility belongs to a chain (6,748 rows),
+          `FALSE` for independents (742 rows). Cross-field
+          invariant: `is_chain_owned = (chain_organization <>
+          'Independent')`, verified — zero violations in the
+          current vintage.
+        data_tests:
+          - not_null
+      - name: chain_organization
+        description: |
+          Chain operator name (trimmed). The literal string
+          `Independent` appears for every non-chain facility; the
+          remaining 6,748 rows carry one of 31 chain-operator
+          names.
+        data_tests:
+          - not_null
+      - name: offers_late_shift
+        description: |
+          Late-shift service flag (raw `'Yes'` / `'No'` mapped to
+          boolean).
+        data_tests:
+          - not_null
+      - name: number_of_dialysis_stations
+        description: |
+          Certified dialysis-station count (`try_cast` to `int`).
+          Populated for every row; observed range 0–254.
+        data_tests:
+          - not_null
+      - name: offers_incenter_hemodialysis
+        description: |
+          Whether the facility offers in-center hemodialysis (raw
+          `'Yes'` / `'No'` mapped to boolean).
+        data_tests:
+          - not_null
+      - name: offers_peritoneal_dialysis
+        description: |
+          Whether the facility offers peritoneal dialysis (raw
+          `'Yes'` / `'No'` mapped to boolean).
+        data_tests:
+          - not_null
+      - name: offers_home_hemodialysis_training
+        description: |
+          Whether the facility offers home hemodialysis training
+          (raw `'Yes'` / `'No'` mapped to boolean).
+        data_tests:
+          - not_null
+      - name: certification_date
+        description: |
+          Date CMS certified the facility for Medicare, cast to
+          `date`. Populated for every row in the current vintage;
+          empty strings become `NULL` defensively.
+        data_tests:
+          - not_null
+      - name: five_star
+        description: |
+          Overall five-star rating (1–5). Suppressed to `NULL` in
+          491 rows where `five_star_data_availability_code <> '001'`
+          (verified: zero rating rows have `code = '001'` with a
+          missing star, and zero suppressed rows have a star).
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 5
+                inclusive: true
+      - name: five_star_data_availability_code
+        description: |
+          Data-availability code for the five-star rating:
+          `001` = reported (6,999 rows); `260`, `258`, `201` are
+          suppression reasons (415, 71, 5 rows respectively). Codes
+          are kept verbatim so consumers can distinguish "too few
+          patients" from "not eligible to be scored".
+      - name: smr_category
+        description: |
+          Standardized Mortality Ratio comparison text: `As
+          Expected` (6,800 rows), `Not Available` (314), `Worse
+          than Expected` (214), `Better than Expected` (162).
+      - name: smr_data_availability_code
+        description: |
+          Data-availability code for SMR — `001` = reported
+          (7,176 rows); non-`001` codes suppress the rate.
+      - name: smr_mortality_rate
+        description: |
+          Facility mortality rate (%). Suppressed to `NULL` when
+          `smr_data_availability_code <> '001'` (verified: zero
+          suppressed rows carry a rate). Observed range 0.0–66.4
+          across 7,176 populated rows.
+      - name: hcp_vaccination_percent
+        description: |
+          Percentage of healthcare personnel with an up-to-date
+          COVID-19 vaccination. `try_cast` to `double`; suppression
+          governed by `hcp_vaccination_data_availability_code`.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          name: stg_cms__dialysis_facility_listing__chain_flag_matches_org
+          arguments:
+            expression: |
+              is_chain_owned = (chain_organization <> 'Independent')
+      - dbt_utils.expression_is_true:
+          name: stg_cms__dialysis_facility_listing__smr_suppression_pairs
+          arguments:
+            expression: |
+              (smr_data_availability_code = '001')
+                = (smr_mortality_rate is not null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__dialysis_facility_listing__sir_suppression_pairs
+          arguments:
+            expression: |
+              (sir_data_availability_code = '001')
+                = (sir_ratio is not null)
+      - dbt_utils.expression_is_true:
+          name: stg_cms__dialysis_facility_listing__five_star_suppression_pairs
+          arguments:
+            expression: |
+              (five_star_data_availability_code = '001')
+                = (five_star is not null)
