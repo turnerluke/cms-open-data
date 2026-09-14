@@ -160,3 +160,41 @@ limit 15
   <Column id=part_b_spending title="Part B" fmt=usd0 />
   <Column id=combined_spending title="Combined" fmt=usd0 />
 </DataTable>
+
+## Caveats
+
+- **Part D total shown here ≠ Part D total on /prescribers.** This
+  page's Part D figures come from the CMS *spending-by-drug* file
+  (2023 program-wide roll-up: $275.8B, `'Overall'` manufacturer rows
+  in `fct_part_d_drug_spending`). The
+  [/prescribers](/prescribers) page reports Part D from the CMS
+  *prescriber-profile* file ($288.4B total drug cost; $284.8B
+  MAPD+PDP in `fct_prescriber_profile`). The two CMS sources roll
+  up different universes — drug-level spending vs per-NPI prescriber
+  totals — and neither reconciles to the other; the site convention
+  is to stay within one source per page.
+- **`'Overall'` manufacturer rows are kept for drug-level analysis.**
+  Part D's spending file publishes both per-manufacturer rows and an
+  `'Overall'` roll-up for each drug. `fct_part_d_drug_spending`
+  keeps both and flags the roll-up via `is_manufacturer_rollup`. Every
+  Part D chart on this page filters on that flag; summing
+  `total_spending` without it double-counts.
+- **Part B has no manufacturer breakdown.** CMS publishes Part B
+  spending per HCPCS billing code only, so a single code can cover
+  several branded drugs — the `brand_name` column occasionally lists
+  multiple values. Summing Part B `total_spending` needs no roll-up
+  filter.
+- **Unmarketed drug-years are dropped, suppressed cells are kept.**
+  Both facts drop rows where every metric for a drug-year is null
+  (the drug wasn't marketed that year — 11,038 rows dropped in Part
+  D). Individual cells that CMS suppressed for privacy stay `NULL`
+  and are never coalesced to 0, so per-beneficiary and
+  per-claim-derived metrics disappear on small cells rather than
+  reading as $0.
+- **`dim_drug` join is name-based.** The Part B ↔ Part D overlap
+  table joins on `drug_key`, a hash of upper-cased brand + generic
+  names. Name formatting differs between the two files, so treat
+  the overlap as a lower bound on drugs billed in both programs.
+  Part B rows whose HCPCS code carries no drug name (e.g.
+  not-otherwise-classified codes) have `drug_key = NULL` and are
+  excluded from the join.

@@ -176,7 +176,7 @@ are what differ.
 
 ### `HRRP` by state
 
-Joining to `dim_hospital` for the state attaches state labels; ~20
+Joining to `dim_hospital` for the state attaches state labels; 20
 CCNs in the HRRP file don't reconcile with the Care Compare hospital
 roster and are dropped by the inner join.
 
@@ -325,3 +325,47 @@ order by stars
   <Column id=avg_tps title="Avg TPS" fmt=num2 />
   <Column id=median_tps title="Median TPS" fmt=num2 />
 </DataTable>
+
+## Caveats
+
+- **Scores are comparable within a measure only.** `score` semantics
+  in `fct_hospital_quality` vary by `measure_domain` and `measure_id`
+  — a HCAHPS star rating, a mortality rate per 100, a standardized
+  infection ratio, and a readmission rate all live in the same
+  column. Every view on this page filters to a specific measure (or
+  a small family of related SIR measures) and never aggregates across
+  them. The HAI averages are additionally unweighted means across
+  reporting hospitals, so small and large facilities count equally.
+- **Suppressed and "Not Available" cells are kept as `NULL`, not
+  zero.** `fct_hospital_quality`, `fct_hospital_readmissions`, and
+  `fct_hospital_vbp` all preserve CMS's small-count suppression and
+  `'Not Available'` sentinels as nulls. Coverage counts on this page
+  are always non-null observations, not row counts — e.g. 11,720 of
+  18,330 HRRP rows carry an `excess_readmission_ratio`; the other
+  6,610 (36%) are ineligible or suppressed.
+- **`HRRP` is calibrated to a national average of 1.0.** The excess
+  readmission ratio is a predicted-to-expected ratio; roughly half
+  the measured hospitals sit above 1.0 by construction, so a ~48%
+  penalized share is the baseline outcome of the program, not a
+  quality signal on its own. Penalized shares below in the by-state
+  and by-condition tables should be read against that ~48% baseline.
+- **`HRRP` and `VBP` snapshots trail the Care Compare provider
+  file.** Both mart tests join to `dim_hospital` at **warn**
+  severity: HRRP (2026-01-26 vintage) has 20 CCNs / 120 rows that
+  don't reconcile with the 2026-07-22 provider snapshot; VBP has 9.
+  This is a structural annual-vs-quarterly cadence gap — the
+  state-level HRRP view and the TPS-vs-stars chart drop those rows
+  via inner join, so their coverage (e.g. 2,417 of 2,455 VBP
+  hospitals in the star-rating view) trails the mart totals.
+- **`VBP` reweighting excludes some domain scores.** 156 of the
+  2,455 FY2026 hospitals are missing at least one weighted domain
+  score because CMS reweights the remaining domains when a hospital
+  lacks enough measure data. Those rows are kept in the mart; the
+  domain-average table on this page necessarily excludes each
+  domain's null hospitals, so scored-hospital counts differ across
+  domains. Maryland is absent entirely — its hospitals are exempt
+  from `VBP` under the state's all-payer model.
+- **`HRRP` measurement window is fixed.** Every row in the current
+  HRRP vintage covers the same 2021-07-01 → 2024-06-30 window (CMS
+  publishes annually over a three-year rolling period), so nothing
+  in the HRRP sections is a time series.
