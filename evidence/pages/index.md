@@ -40,6 +40,12 @@ hospital quality, modeled with dbt on DuckDB from CMS public datasets.
   care split (including which states carve pharmacy out of managed
   care), top drugs and labelers by reimbursement, and a program-level
   comparison against Medicare Part D and Part B.
+- [Specialty facilities](/specialty-facilities) — Medicare-certified
+  dialysis clinics, inpatient rehabilitation facilities, and long-
+  term care hospitals: chain landscape and five-star distribution
+  for dialysis, standardized-ratio and percent-of-patient measures,
+  freestanding-vs-hospital-unit split for IRFs, and LTCH bed
+  capacity.
 
 ## Warehouse coverage
 
@@ -184,6 +190,30 @@ select
     program_compare_rows,
     'CY2023 program compare'
 from cms.medicaid_stats
+union all
+select
+    'dim_dialysis_facility',
+    dialysis_facilities,
+    cast(dialysis_states as varchar) || ' states'
+from cms.specialty_facility_stats
+union all
+select
+    'dim_irf',
+    irf_facilities,
+    cast(irf_states as varchar) || ' states'
+from cms.specialty_facility_stats
+union all
+select
+    'dim_ltch',
+    ltch_facilities,
+    cast(ltch_states as varchar) || ' states'
+from cms.specialty_facility_stats
+union all
+select
+    'fct_dialysis_quality',
+    dialysis_quality_rows,
+    cast(dialysis_quality_measures as varchar) || ' measures'
+from cms.specialty_facility_stats
 order by mart
 ```
 
