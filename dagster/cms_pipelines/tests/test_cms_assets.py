@@ -14,12 +14,23 @@ from pathlib import Path
 
 from cms_api import DatasetSpec, JsonObject, NppesProvider, load_registry
 from cms_pipelines.defs.cms import nppes, registry_assets
+from cms_pipelines.defs.cms.vintage_sidecar import VINTAGES_DIRNAME
 from cms_pipelines.defs.io_managers.parquet import ParquetIOManager
 import pyarrow.parquet as pq
 
 from dagster import AssetsDefinition, ExecuteInProcessResult, materialize
 
 import pytest
+
+
+_SIMULATED_PERSIST_MESSAGE = "simulated parquet persist failure"
+
+
+class _SimulatedPersistError(RuntimeError):
+    """Raised by persist-failure tests to interrupt `pq.write_table`."""
+
+    def __init__(self) -> None:
+        super().__init__(_SIMULATED_PERSIST_MESSAGE)
 
 
 def _io_manager(tmp_path: Path) -> ParquetIOManager:
@@ -252,3 +263,110 @@ def test_nppes_sweep_fails_when_every_state_empty(
 
     with pytest.raises(Exception, match="zero providers"):
         _materialize_nppes(tmp_path, states=["CA"])
+
+
+# ---------------------------------------------------------------------------
+# Sidecar-after-persist sequencing
+#
+# Both assets manage their own Parquet publish so the vintage sidecar can
+# be written *after* the Parquet is durably in place — matching the
+# `bulk_csv_assets` / `qhp_zip_assets` pattern. These tests pin two
+# invariants for each: a successful materialization writes the sidecar,
+# and a persist failure leaves no fresh sidecar (so a previous good
+# sidecar is never stamped over stale data).
+# ---------------------------------------------------------------------------
+
+
+def _fake_provider(state: str) -> NppesProvider:
+    """Build a minimal NPPES provider record for the given state."""
+    return NppesProvider.model_validate(
+        {
+            "number": "1234567890",
+            "enumeration_type": "NPI-2",
+            "basic": {"organization_name": f"Org in {state}"},
+            "addresses": [{"state": state, "address_purpose": "LOCATION"}],
+            "taxonomies": [],
+        },
+    )
+
+
+def test_nppes_success_writes_sidecar(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A successful NPPES materialization lands both Parquet and vintage sidecar."""
+
+    def fake_search(*, enumeration_type: str, state: str) -> Iterator[NppesProvider]:
+        del enumeration_type
+        yield _fake_provider(state)
+
+    monkeypatch.setattr(nppes, "search_providers", fake_search)
+
+    result = _materialize_nppes(tmp_path, states=["CA"])
+    assert result.success
+    assert (tmp_path / "cms_nppes_providers" / "data.parquet").exists()
+    assert (tmp_path / VINTAGES_DIRNAME / "cms_nppes_providers.parquet").exists()
+
+
+def test_nppes_persist_failure_leaves_no_fresh_sidecar(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A `pq.write_table` failure aborts before the sidecar is written.
+
+    Pins the "sidecar-after-persist" invariant: if the Parquet publish
+    fails, `write_vintage_sidecar` must never run, so a previous good
+    sidecar sitting under `_vintages/` is left untouched instead of
+    being overwritten with a fresh capture pointing at stale data.
+    """
+
+    def fake_search(*, enumeration_type: str, state: str) -> Iterator[NppesProvider]:
+        del enumeration_type
+        yield _fake_provider(state)
+
+    monkeypatch.setattr(nppes, "search_providers", fake_search)
+
+    def failing_write_table(*_args: object, **_kwargs: object) -> None:
+        raise _SimulatedPersistError
+
+    monkeypatch.setattr(nppes.pq, "write_table", failing_write_table)
+
+    with pytest.raises(Exception, match=_SIMULATED_PERSIST_MESSAGE):
+        _materialize_nppes(tmp_path, states=["CA"])
+
+    asset_dir = tmp_path / "cms_nppes_providers"
+    # Failed persist must leave no live Parquet and no leaked stage file.
+    assert not list(asset_dir.glob("*.parquet"))
+    assert not list(asset_dir.glob(".*.tmp"))
+    # Load-bearing: the sidecar was never touched.
+    assert not (tmp_path / VINTAGES_DIRNAME / "cms_nppes_providers.parquet").exists()
+
+
+def test_registry_asset_persist_failure_leaves_no_fresh_sidecar(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A registry-driven asset's `pq.write_table` failure aborts before sidecar write.
+
+    Mirrors the NPPES test above for the factory-built assets: the
+    sidecar is written strictly after `publish_parquet` succeeds, so
+    a persist failure must never leave a fresh sidecar behind.
+    """
+    monkeypatch.setattr(
+        registry_assets,
+        "iter_provider_data_catalog",
+        lambda _dataset_id: iter([{"facility_id": "010001"}]),
+    )
+
+    def failing_write_table(*_args: object, **_kwargs: object) -> None:
+        raise _SimulatedPersistError
+
+    monkeypatch.setattr(registry_assets.pq, "write_table", failing_write_table)
+
+    spec = next(s for s in load_registry() if s.source == "dkan_provider_data")
+    asset_def = _registry_asset(spec)
+
+    with pytest.raises(Exception, match=_SIMULATED_PERSIST_MESSAGE):
+        _materialize(asset_def, tmp_path)
+
+    asset_dir = tmp_path / f"cms_{spec.key}"
+    assert not list(asset_dir.glob("*.parquet"))
+    assert not list(asset_dir.glob(".*.tmp"))
+    assert not (tmp_path / VINTAGES_DIRNAME / f"cms_{spec.key}.parquet").exists()

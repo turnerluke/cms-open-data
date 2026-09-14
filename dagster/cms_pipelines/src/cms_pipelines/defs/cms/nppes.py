@@ -11,10 +11,12 @@ from pathlib import Path
 
 from cms_api import NppesProvider, local_vintage, search_providers
 import pyarrow as pa
+import pyarrow.parquet as pq
 
 from cms_pipelines.defs.cms.vintage_sidecar import write_vintage_sidecar
+from cms_pipelines.defs.io_managers.parquet import publish_parquet, staged_write
 from cms_pipelines.defs.resources import resolve_raw_root
-from dagster import AssetExecutionContext, Config, asset
+from dagster import AssetExecutionContext, Config, MaterializeResult, MetadataValue, asset
 
 
 US_STATES = (
@@ -38,7 +40,6 @@ class NppesProvidersConfig(Config):
 
 
 @asset(
-    io_manager_key="parquet_io_manager",
     group_name="cms_raw",
     compute_kind="python",
     description=(
@@ -50,8 +51,16 @@ class NppesProvidersConfig(Config):
 def cms_nppes_providers(
     context: AssetExecutionContext,
     config: NppesProvidersConfig,
-) -> pa.Table:
-    """Sweep NPPES organizational providers and land them as Parquet."""
+) -> MaterializeResult:
+    """Sweep NPPES organizational providers and land them as Parquet.
+
+    Bypasses the shared Parquet IO manager so the vintage sidecar can be
+    written *after* the Parquet is durably persisted — matching the
+    ``bulk_csv_assets`` / ``qhp_zip_assets`` sequencing. If persist fails
+    the sidecar is never touched, so stale data never sits next to a
+    fresh sidecar.
+    """
+    asset_name = "cms_nppes_providers"
     providers: list[NppesProvider] = []
     for state in config.states:
         state_providers = list(search_providers(enumeration_type="NPI-2", state=state))
@@ -60,14 +69,19 @@ def cms_nppes_providers(
     if not providers:
         msg = "NPPES sweep returned zero providers; refusing to land empty Parquet"
         raise RuntimeError(msg)
+    raw_root = Path(resolve_raw_root())
+    table = pa.Table.from_pylist([p.model_dump(mode="json") for p in providers])
+    with staged_write(raw_root / asset_name, context.run.run_id) as staged:
+        pq.write_table(table, staged)
+        out_path = publish_parquet(staged)
     # NPPES is a live registry sweep, not a published snapshot, so its
     # vintage is capture-time only (no upstream modified/temporal dates).
-    # The sidecar lands before the IO manager persists the table, so a
-    # failed persist leaves a fresh sidecar beside stale data. TODO:
-    # write it post-persist like bulk_csv_assets/qhp_zip_assets do
-    write_vintage_sidecar(
-        Path(resolve_raw_root()),
-        "cms_nppes_providers",
-        local_vintage("nppes_providers", "nppes"),
+    vintage_path = write_vintage_sidecar(raw_root, asset_name, local_vintage("nppes_providers", "nppes"))
+    return MaterializeResult(
+        metadata={
+            "path": MetadataValue.path(str(out_path)),
+            "row_count": MetadataValue.int(table.num_rows),
+            "column_count": MetadataValue.int(table.num_columns),
+            "vintage_path": MetadataValue.path(str(vintage_path)),
+        },
     )
-    return pa.Table.from_pylist([p.model_dump(mode="json") for p in providers])
