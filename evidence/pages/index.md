@@ -46,6 +46,11 @@ hospital quality, modeled with dbt on DuckDB from CMS public datasets.
   for dialysis, standardized-ratio and percent-of-patient measures,
   freestanding-vs-hospital-unit split for IRFs, and LTCH bed
   capacity.
+- [Dialysis chains](/dialysis-chains) — do DaVita and Fresenius, who
+  run roughly three-quarters of Medicare-certified outpatient
+  dialysis facilities, deliver measurably different quality than the
+  rest of the market? Chain-level star mix, key clinical measures,
+  and the reporting-rate gap that conditions every headline.
 
 ## Warehouse coverage
 
@@ -214,6 +219,25 @@ select
     dialysis_quality_rows,
     cast(dialysis_quality_measures as varchar) || ' measures'
 from cms.specialty_facility_stats
+union all
+select
+    'dim_dialysis_chain',
+    (select count(*) from cms.dim_dialysis_chain),
+    'chain groups'
+union all
+select
+    'fct_dialysis_chain_measure',
+    (select count(*) from cms.fct_dialysis_chain_measure),
+    cast(
+        (select count(distinct measure_code)
+         from cms.fct_dialysis_chain_measure)
+        as varchar
+    ) || ' measures × 4 chain groups'
+union all
+select
+    'fct_dialysis_chain_star_mix',
+    (select count(*) from cms.fct_dialysis_chain_star_mix),
+    'chain groups'
 order by mart
 ```
 
