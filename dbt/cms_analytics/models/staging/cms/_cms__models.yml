@@ -2905,6 +2905,103 @@ models:
         data_tests:
           - not_null
 
+  - name: stg_cms__vintage_ledger
+    description: |
+      Durable append-only history of every vintage-sidecar capture.
+      Whereas `stg_cms__dataset_vintages` reads the current ephemeral
+      sidecars under `data/raw/_vintages/` (one row per dataset,
+      overwritten on every run), this staging model reads the JSONL
+      ledger at `data/vintages/ledger.jsonl` — a file that is
+      committed to the repo and appended to by
+      `python -m cms_pipelines.vintage_ledger append`. Grain:
+      (`run_date`, `dataset_key`). Rows are never modified once
+      written, so this is the warehouse's source of truth for how
+      upstream vintages, row counts, and schemas drift over time.
+    columns:
+      - name: ledger_version
+        description: |
+          Schema version of the ledger row (bumped when the JSONL
+          shape changes incompatibly). Constant `1` today.
+        data_tests:
+          - not_null
+      - name: run_date
+        description: |
+          UTC date on which the capture was written, derived from
+          `captured_at` (not wall clock) so same-day reruns are stable
+          no-ops. Together with `dataset_key` forms the primary key.
+        data_tests:
+          - not_null
+      - name: captured_at
+        description: |
+          UTC timestamp copied through from the sidecar — when the
+          extraction (or backfill) that produced this ledger row ran.
+        data_tests:
+          - not_null
+      - name: asset_name
+        description: |
+          Dagster asset name that produced the extract (e.g.
+          `cms_hospital_general_information`, or `cms_nppes_providers`
+          for the hand-written NPPES sweep). Equals `cms_` +
+          `dataset_key` for registry-driven assets.
+        data_tests:
+          - not_null
+      - name: dataset_key
+        description: |
+          Registry key from `libs/cms_api/datasets.toml` (no `cms_`
+          prefix), plus `nppes_providers` for the NPPES sweep. Part
+          of the primary key.
+        data_tests:
+          - not_null
+      - name: source_family
+        description: |
+          Extraction family (`dkan_provider_data`,
+          `dkan_data_api_bulk`, `nppes`, `healthcare_gov`, …).
+        data_tests:
+          - not_null
+      - name: dataset_id
+        description: |
+          Upstream dataset identifier (DKAN UUID or provider-data
+          slug); `NULL` for sources without one.
+      - name: modified
+        description: |
+          Upstream `modified` date at capture time; `NULL` when the
+          publisher exposes no modification date.
+      - name: issued
+        description: "Upstream `issued` date, when published."
+      - name: released
+        description: |
+          Provider-data `released` date; `NULL` for other source
+          families.
+      - name: temporal_start
+        description: "Start of the upstream `temporal` coverage window."
+      - name: temporal_end
+        description: "End of the upstream `temporal` coverage window."
+      - name: row_count
+        description: |
+          Sum of Parquet-footer `num_rows` across the dataset's
+          `*.parquet` files at capture time. Read from footers only —
+          never scanned — so this is cheap even for large extracts.
+        data_tests:
+          - not_null
+      - name: file_count
+        description: |
+          Number of Parquet files that made up the dataset at capture
+          time (usually 1; more when a source is partitioned).
+      - name: total_bytes
+        description: "Sum of file sizes across the dataset's Parquet files."
+      - name: schema_hash
+        description: |
+          12-hex-char sha256 prefix of the dataset's Parquet schema
+          (union of `name:type` lines across all files, sorted).
+          Marts flag a run as `schema_changed` when this differs from
+          the prior run for the same dataset.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - run_date
+              - dataset_key
+
   - name: stg_cms__open_payments_ownership_2024
     description: |
       Open Payments — Physician Ownership and Investment Interests,

@@ -31,16 +31,16 @@ def test_full_refresh_job_resolves() -> None:
 def test_full_refresh_job_covers_extraction_and_dbt_assets() -> None:
     """`AssetSelection.all()` picks up both extraction assets and dbt models.
 
-    The only asset key outside the job selection is the
-    `dataset_vintages` external spec: the vintage sidecars are written
-    as a side effect of every extraction asset, so the dbt source has
-    no single producing asset to select.
+    Two asset keys sit outside the job selection: the `dataset_vintages`
+    sidecar source (written as a side effect of every extraction asset,
+    so no single producer) and the `vintage_ledger` durable JSONL source
+    (appended to by a CLI, not a Dagster asset).
     """
     definitions = defs()
     selected = _selected_keys(definitions)
 
     all_keys = {key.to_user_string() for key in definitions.resolve_asset_graph().get_all_asset_keys()}
-    assert all_keys - selected == {"dataset_vintages"}
+    assert all_keys - selected == {"dataset_vintages", "vintage_ledger"}
     assert selected <= all_keys
 
     extraction = {key for key in selected if key.startswith("cms_")}
@@ -81,13 +81,15 @@ def test_dbt_source_tables_match_extraction_assets() -> None:
         (Path(__file__).resolve().parents[3] / "dbt" / "cms_analytics" / "target" / "manifest.json").read_text()
     )
     source_tables = {node["name"] for node in manifest["sources"].values()}
-    # the vintage-sidecar source is written by every extraction asset,
-    # so it deliberately has no same-named asset (see `defs.yaml`)
+    # the vintage-sidecar and durable-ledger sources have no matching
+    # extraction asset — the first is a side effect of every asset, the
+    # second is appended to by a CLI (see `defs.yaml`)
     assert "dataset_vintages" in source_tables
+    assert "vintage_ledger" in source_tables
 
     graph = defs().resolve_asset_graph()
     extraction = {key.to_user_string() for key in graph.get_all_asset_keys() if key.to_user_string().startswith("cms_")}
-    assert source_tables - {"dataset_vintages"} == extraction
+    assert source_tables - {"dataset_vintages", "vintage_ledger"} == extraction
 
 
 def test_full_refresh_schedule_targets_job_weekly() -> None:
