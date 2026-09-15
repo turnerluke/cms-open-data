@@ -1,0 +1,394 @@
+version: 2
+
+models:
+  - name: dim_dialysis_chain
+    description: |
+      Chain-group dimension for the DaVita-vs-Fresenius comparative
+      analysis. Grain: `chain_group` — four rows.
+
+      Collapses `dim_dialysis_facility.chain_organization` (32 distinct
+      values in the 2026-08 vintage: 2 national for-profit chains,
+      29 smaller chains / health-system programs, and `Independent`)
+      into four analytical buckets:
+
+      - `DaVita` — `chain_organization = 'DaVita'`
+        (2,799 facilities).
+      - `Fresenius` — `chain_organization = 'Fresenius Medical Care'`
+        (2,701 facilities).
+      - `Other chain` — any other `chain_organization`, i.e.
+        `is_chain_owned = true` AND not one of the two national chains
+        (1,248 facilities across 29 chain organizations — includes
+        the CMS pseudo-label `Other`, regional for-profit chains like
+        US Renal Care and American Renal Associates, non-profit
+        networks like Dialysis Clinic Inc., and health-system-owned
+        programs like Kaiser Permanente, Mayo Clinic Dialysis, and
+        Sanford Health).
+      - `Independent` — `chain_organization = 'Independent'` (742
+        facilities; staging invariant: iff `is_chain_owned = false`).
+
+      Counts sum to 7,490 — every facility falls into exactly one
+      group. The two national chains together run 5,500 facilities,
+      73.4% of Medicare-certified dialysis capacity by facility count.
+    columns:
+      - name: chain_group
+        description: |
+          Analytical chain-ownership bucket, one of `DaVita`,
+          `Fresenius`, `Other chain`, `Independent`. Primary key.
+        data_tests:
+          - not_null
+          - unique
+          - accepted_values:
+              arguments:
+                values:
+                  - DaVita
+                  - Fresenius
+                  - Other chain
+                  - Independent
+      - name: n_facilities
+        description: |
+          Count of Medicare-certified dialysis facilities in the
+          group. Sums to 7,490 across all rows.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: n_chain_organizations
+        description: |
+          Count of distinct `chain_organization` values that map into
+          this `chain_group`. 1 for `DaVita`, `Fresenius`, and
+          `Independent`; 29 for `Other chain` in the current vintage.
+        data_tests:
+          - not_null
+      - name: chain_organization_list
+        description: |
+          Sorted list of the `chain_organization` values that map
+          into this `chain_group`. Documents the group membership
+          verbatim so a page can display "who's in Other chain?"
+          without re-querying the fact.
+        data_tests:
+          - not_null
+      - name: as_of
+        description: |
+          Snapshot vintage — the upstream `modified` date CMS
+          reported for the Dialysis Facility Listing file at capture
+          time (from `stg_cms__dataset_vintages`). Constant across
+          rows.
+        data_tests:
+          - not_null
+
+  - name: fct_dialysis_chain_measure
+    description: |
+      Chain-group by measure_code rollup of `fct_dialysis_quality`
+      for the DaVita-vs-Fresenius comparative analysis. Grain:
+      (`chain_group`, `measure_code`) — 4 chain_groups × 27 measure
+      codes = 108 rows.
+
+      **Reported-only filter.** All score aggregations use only
+      CMS-reported rows (`is_reported = true`, i.e.
+      `availability_code = '001'` in the source). Suppressed rows
+      carry a NULL `score_numeric` upstream and are intentionally
+      excluded from means — they are not zeros. Because suppression
+      may correlate with facility size (which differs sharply by
+      chain), reporting rate itself is a first-class output:
+      `n_facilities_reported / n_facilities_total` is the participation
+      rate for the group / measure.
+
+      **Two mean flavours.** `score_unweighted_mean` is the plain
+      facility-level mean — every facility gets one vote regardless
+      of size. It answers "what does the typical facility in this
+      chain look like?". `score_weighted_mean` weights each facility
+      by its reported denominator
+      (`sum(score_numeric * denominator) / sum(denominator)`,
+      reported-rows only). It answers "what does the typical
+      patient / patient-month / hospitalization at a chain
+      experience?". Big-facility performance dominates the weighted
+      mean; small independents dominate the unweighted mean. Report
+      **both** — divergence is analytically interesting.
+
+      **Weighting safety.** Weighting only makes sense within one
+      `measure_code` because `denominator_unit`
+      (`patients` / `hospitalizations` / `patient_months`) is
+      constant within a code but mixed across codes. Never sum
+      denominators across measures. The three measure codes without
+      a per-row denominator upstream (`five_star`, `sir`,
+      `hcp_vaccination`) yield `score_weighted_mean = NULL` and
+      `total_denominator = NULL`; only the unweighted mean is
+      available for those.
+
+      **Category counts.** For the 11 measures CMS publishes a
+      categorical peer-comparison bucket for (SMR / SHR / SRR / STrR /
+      SIR / SEDR / ED30 / FYSWR / PPPW / SMOSR / fistula), the four
+      counters `n_better_than_expected`, `n_as_expected`,
+      `n_worse_than_expected`, `n_not_available` split the group's
+      facilities across CMS's peer-comparison labels. The literal
+      `Not Available` is CMS's suppression label and is counted
+      separately; the three "reported" bins sum to
+      `n_facilities_reported`. For measures without a categorical
+      companion column all four counters are NULL.
+    columns:
+      - name: chain_group
+        description: |
+          Analytical chain-ownership bucket. Foreign key to
+          `dim_dialysis_chain`.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values:
+                  - DaVita
+                  - Fresenius
+                  - Other chain
+                  - Independent
+          - relationships:
+              arguments:
+                to: ref('dim_dialysis_chain')
+                field: chain_group
+      - name: measure_code
+        description: |
+          Short code identifying the clinical measure — the same
+          `measure_code` used in `fct_dialysis_quality` (e.g. `smr`,
+          `sir`, `fistula`, `adult_hd_ktv`,
+          `serum_phosphorus_lt_3_5`).
+        data_tests:
+          - not_null
+      - name: measure_name
+        description: |
+          Human-readable measure description, carried through from
+          `fct_dialysis_quality`.
+        data_tests:
+          - not_null
+      - name: denominator_unit
+        description: |
+          Unit of `total_denominator` — `patients`,
+          `hospitalizations`, or `patient_months`. Constant within a
+          `measure_code`. NULL for the five measure codes without a
+          per-row denominator upstream (see model description).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                  - patients
+                  - hospitalizations
+                  - patient_months
+      - name: n_facilities_total
+        description: |
+          Total facilities in this `chain_group` (independent of
+          measure). Constant across `measure_code` for a given
+          `chain_group`. Sums across the four groups to 7,490 for
+          any single measure_code.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: n_facilities_reported
+        description: |
+          Count of facilities in the group where CMS reported this
+          measure (`is_reported = true`). Reporting rate is
+          `n_facilities_reported / n_facilities_total`.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: score_unweighted_mean
+        description: |
+          Facility-level mean of `score_numeric` over reported rows
+          only. Every facility contributes one observation. NULL when
+          `n_facilities_reported = 0`.
+      - name: score_weighted_mean
+        description: |
+          Denominator-weighted mean of `score_numeric` over reported
+          rows:
+          `sum(score_numeric * denominator) / sum(denominator)`.
+          Weights each facility by its patient / patient-month /
+          hospitalization count. NULL for measures without a per-row
+          denominator upstream (`five_star`, `sir`,
+          `hcp_vaccination`) or when
+          `total_denominator = 0`.
+      - name: total_denominator
+        description: |
+          Sum of `denominator` across reported rows in the group for
+          this measure. Same unit as `denominator_unit`. NULL for
+          measures without a per-row denominator upstream.
+      - name: n_better_than_expected
+        description: |
+          Count of facilities in the group whose CMS categorical
+          bucket for this measure was `Better than Expected`. NULL
+          for measures without a categorical companion column.
+      - name: n_as_expected
+        description: |
+          Count of facilities in the group whose CMS categorical
+          bucket for this measure was `As Expected`.
+      - name: n_worse_than_expected
+        description: |
+          Count of facilities in the group whose CMS categorical
+          bucket for this measure was `Worse than Expected`.
+      - name: n_not_available
+        description: |
+          Count of facilities in the group whose CMS categorical
+          value was the literal `Not Available` — CMS's suppression
+          label on ratio-family measures. Counted separately from
+          the three reported bins.
+      - name: as_of
+        description: |
+          Snapshot vintage — the upstream `modified` date CMS
+          reported for the Dialysis Facility Listing file. Constant
+          across rows.
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - chain_group
+              - measure_code
+      # Reported facilities can never exceed the group's total.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "n_facilities_reported <= n_facilities_total"
+      # A weighted mean without a positive denominator would be
+      # nonsensical; enforce NULL semantics.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: >
+              score_weighted_mean is null
+              or coalesce(total_denominator, 0) > 0
+      # Ratio-family category counts must sum to n_facilities_total
+      # (the three reported bins plus 'Not Available' cover every
+      # facility). Only tested where category counts are populated.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: >
+              n_better_than_expected is null
+              or (
+                coalesce(n_better_than_expected, 0)
+                + coalesce(n_as_expected, 0)
+                + coalesce(n_worse_than_expected, 0)
+                + coalesce(n_not_available, 0)
+              ) = n_facilities_total
+
+  - name: fct_dialysis_chain_star_mix
+    description: |
+      Facility five-star distribution by `chain_group`. Grain:
+      `chain_group` — four rows, wide layout with one column per star
+      bucket plus an unrated bucket.
+
+      **Star source.** `dim_dialysis_facility.five_star`, not the
+      `five_star` row of `fct_dialysis_quality`. Both derive from the
+      same CMS column, but the dim exposes it as a nullable smallint
+      (NULL = CMS-suppressed rating) at facility grain, which is the
+      natural shape for a facility-count star mix. Chosen for
+      single-source consistency; do not mix in the fact.
+
+      `n_unrated` reports facilities where CMS suppressed the overall
+      five-star rating (availability code in `201` / `258` / `260`,
+      typically too-few-patients or new-facility). Reporting the
+      unrated count matters analytically because Independent
+      facilities are far more likely to be unrated than the national
+      chains (225 of 742 Independent, 30.3%, versus 102 of 2,799
+      DaVita = 3.6% and 71 of 2,701 Fresenius = 2.6%). A headline
+      "average stars" comparison that silently drops unrated rows
+      understates the size gap.
+
+      `mean_star_rated` averages the five-star rating over rated
+      facilities only. Compare with `n_unrated` to keep the
+      selection-bias story honest.
+    columns:
+      - name: chain_group
+        description: |
+          Analytical chain-ownership bucket. Foreign key to
+          `dim_dialysis_chain`.
+        data_tests:
+          - not_null
+          - unique
+          - accepted_values:
+              arguments:
+                values:
+                  - DaVita
+                  - Fresenius
+                  - Other chain
+                  - Independent
+          - relationships:
+              arguments:
+                to: ref('dim_dialysis_chain')
+                field: chain_group
+      - name: n_star_1
+        description: "Facilities with a one-star overall rating."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: n_star_2
+        description: "Facilities with a two-star overall rating."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: n_star_3
+        description: "Facilities with a three-star overall rating."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: n_star_4
+        description: "Facilities with a four-star overall rating."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: n_star_5
+        description: "Facilities with a five-star overall rating."
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: n_unrated
+        description: |
+          Facilities where CMS suppressed the overall five-star
+          rating (availability code in `201` / `258` / `260`).
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: n_facilities_total
+        description: |
+          Total facilities in the group. Equal to
+          `n_star_1 + n_star_2 + n_star_3 + n_star_4 + n_star_5 + n_unrated`
+          and matches `dim_dialysis_chain.n_facilities`.
+        data_tests:
+          - not_null
+      - name: mean_star_rated
+        description: |
+          Mean of `five_star` across rated facilities in the group
+          (unrated facilities excluded). NULL if no facility in the
+          group is rated.
+      - name: as_of
+        description: |
+          Snapshot vintage — the upstream `modified` date CMS
+          reported for the Dialysis Facility Listing file.
+        data_tests:
+          - not_null
+    data_tests:
+      # Star buckets plus unrated must partition the group.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: >
+              n_star_1 + n_star_2 + n_star_3 + n_star_4 + n_star_5
+              + n_unrated = n_facilities_total
