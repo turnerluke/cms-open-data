@@ -51,6 +51,10 @@ hospital quality, modeled with dbt on DuckDB from CMS public datasets.
   dialysis facilities, deliver measurably different quality than the
   rest of the market? Chain-level star mix, key clinical measures,
   and the reporting-rate gap that conditions every headline.
+- [Dataset freshness](/freshness) — how fresh is each CMS extract, when
+  did upstream last publish it, and what changed between weekly
+  warehouse builds. Reads the durable vintage ledger committed to
+  the repo.
 
 ## Warehouse coverage
 
@@ -238,6 +242,15 @@ select
     'fct_dialysis_chain_star_mix',
     (select count(*) from cms.fct_dialysis_chain_star_mix),
     'chain groups'
+union all
+select
+    'fct_dataset_freshness',
+    (select count(*) from cms.fct_dataset_freshness),
+    cast(
+        (select count(distinct source_family)
+         from cms.fct_dataset_freshness)
+        as varchar
+    ) || ' source families'
 order by mart
 ```
 

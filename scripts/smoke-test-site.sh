@@ -45,6 +45,7 @@ readonly ROUTES=(
     "/cost-vs-quality/	Cost vs quality"
     "/dialysis-chains/	Dialysis chains"
     "/drug-spending/	Drug spending"
+    "/freshness/	Dataset freshness"
     "/home-health-hospice/	Home health and hospice"
     "/hospital-quality/	Hospital quality"
     "/marketplace/	Marketplace (Qualified Health Plans)"
