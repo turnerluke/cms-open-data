@@ -119,10 +119,39 @@ jobs:
         env:
           CMS_API_RETRY_MAX_ATTEMPTS: "8"
           CMS_API_RETRY_WAIT_MAX: "90"
+          CMS_API_RETRY_AFTER_MAX: "300"
         run: >
           uv run --package cms-pipelines dagster asset materialize
           -m cms_pipelines.definitions
           --select '+key:"staging/*" and not key:"staging/*" and not key:"dataset_vintages"'
+
+      # Fold today's per-run sidecars into the durable JSONL ledger.
+      # ``bot/vintage-ledger`` is the branch ``publish_ledger`` force-pushes
+      # each run; if a bot PR is still open, its rows haven't merged to
+      # main yet — union them in first so this run's dbt build (and the
+      # deployed site) always reflects the full history regardless of
+      # when the bot PR merges.
+      - name: Merge and append vintage ledger
+        run: |
+          git fetch origin bot/vintage-ledger || true
+          merge_args=()
+          if git show origin/bot/vintage-ledger:data/vintages/ledger.jsonl \
+               > /tmp/bot-ledger.jsonl 2>/dev/null; then
+            merge_args=(--merge-from /tmp/bot-ledger.jsonl)
+          fi
+          uv run --package cms-pipelines python -m cms_pipelines.vintage_ledger \
+            append \
+            --raw-root data/raw \
+            --ledger data/vintages/ledger.jsonl \
+            "${merge_args[@]}"
+
+      - name: Upload vintage ledger artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: vintage-ledger
+          path: data/vintages/ledger.jsonl
+          retention-days: 90
+          if-no-files-found: error
 
       - name: Build warehouse (dbt build)
         working-directory: dbt/cms_analytics
@@ -232,3 +261,142 @@ jobs:
         env:
           PAGE_URL: ${{ needs.deploy_pages.outputs.page_url }}
         run: bash scripts/smoke-test-site.sh "${PAGE_URL%/}"
+
+  # ============================================================================================================================
+  # Publish appended ledger rows back to main via a bot PR
+  # ============================================================================================================================
+  # Deliberately gated on ``build_warehouse`` only, not deploy/smoke:
+  # the ledger records that a fetch happened successfully. A Pages
+  # hiccup after the fact doesn't invalidate today's captured vintages.
+  # The bot branch is force-pushed each run — safe because the
+  # workflow-level ``concurrency`` group serializes runs and the branch
+  # is bot-owned. Known limitation: PRs created with ``GITHUB_TOKEN``
+  # do not trigger ``pull_request`` workflows; if required checks block
+  # merging, close/reopen the PR or swap in a PAT.
+  publish_ledger:
+    name: Publish vintage ledger PR
+    needs: build_warehouse
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/pyproject.toml"
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install cms-pipelines package
+        run: uv sync --package cms-pipelines
+
+      - name: Download vintage ledger artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: vintage-ledger
+          path: /tmp/vintage-ledger
+
+      - name: Verify candidate covers main
+        run: |
+          uv run --package cms-pipelines python -m cms_pipelines.vintage_ledger \
+            verify \
+            --ledger /tmp/vintage-ledger/ledger.jsonl \
+            --superset-of data/vintages/ledger.jsonl
+
+      - name: Stage candidate ledger
+        id: stage
+        run: |
+          cp /tmp/vintage-ledger/ledger.jsonl data/vintages/ledger.jsonl
+          if git diff --quiet -- data/vintages/ledger.jsonl; then
+            echo "ledger unchanged, skipping PR"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and force-push bot branch
+        if: steps.stage.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          today="$(date -u +%Y-%m-%d)"
+          git checkout -B bot/vintage-ledger origin/main
+          git add data/vintages/ledger.jsonl
+          git commit -m "chore(data): append vintage ledger rows for ${today}"
+          git push --force origin bot/vintage-ledger
+
+      - name: Open bot PR if none exists
+        if: steps.stage.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          existing=$(gh pr list --head bot/vintage-ledger --state open --json number --jq 'length')
+          if [ "${existing}" = "0" ]; then
+            gh pr create \
+              --base main \
+              --head bot/vintage-ledger \
+              --title "chore(data): append vintage ledger rows" \
+              --body "$(cat <<'EOF'
+          Automated updates to `data/vintages/ledger.jsonl` — one row per
+          dataset per warehouse run, appended by the scheduled build. The
+          branch is force-pushed on every run; new rows accumulate here
+          until the PR merges into `main`.
+
+          Because this PR is opened by `GITHUB_TOKEN`, `pull_request`
+          workflows do not run against it. If required checks block the
+          merge, close and reopen the PR to trigger them.
+          EOF
+          )"
+          else
+            echo "a bot PR is already open; force-push updates it in place"
+          fi
+
+  # ============================================================================================================================
+  # Failure notification for scheduled runs
+  # ============================================================================================================================
+  # Opens or updates one dedupe'd tracking issue when the weekly cron
+  # fails. Manual dispatches are actively watched, so this stays scoped
+  # to ``schedule`` events to keep the issue tracker signal-heavy.
+  notify_failure:
+    name: File tracking issue on failure
+    needs:
+      - build_warehouse
+      - deploy_pages
+      - smoke_test
+      - publish_ledger
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: "Scheduled warehouse build failed"
+        run: |
+          existing=$(gh issue list \
+            --state open \
+            --search "${TITLE} in:title" \
+            --json number,title \
+            --jq "[.[] | select(.title == \"${TITLE}\")] | .[0].number // empty")
+          body="Scheduled warehouse build failed. Run: ${RUN_URL}"
+          if [ -z "${existing}" ]; then
+            gh issue create --title "${TITLE}" --body "${body}"
+          else
+            gh issue comment "${existing}" --body "${body}"
+          fi
