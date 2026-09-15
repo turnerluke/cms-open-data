@@ -1,0 +1,46 @@
+version: 2
+
+sources:
+  - name: cms_vintage_ledger
+    description: |
+      Durable JSONL ledger of every vintage-sidecar capture the pipeline
+      has ever landed. `data/raw/` is gitignored and CI rebuilds from
+      scratch, so the ephemeral sidecars under `data/raw/_vintages/`
+      would leave no history on their own — this file, appended to by
+      `python -m cms_pipelines.vintage_ledger append` and committed to
+      the repo, is that history. One row per (`run_date`,
+      `dataset_key`); rows are never modified once written. Hand-
+      maintained alongside `_cms_vintages__sources.yml` (not registry-
+      generated).
+    tables:
+      - name: vintage_ledger
+        description: |
+          Union of every appended ledger row. Read directly from the
+          JSONL with explicit column types so all-null date columns
+          stay typed as `DATE` regardless of when their first non-null
+          row lands.
+        meta:
+          formatter: template
+          external_location: >-
+            read_json(
+              '{{ env_var("CMS_LEDGER_PATH", "../../data/vintages/ledger.jsonl") }}',
+              format = 'newline_delimited',
+              columns = {
+                ledger_version: 'INTEGER',
+                run_date: 'DATE',
+                captured_at: 'TIMESTAMP WITH TIME ZONE',
+                asset_name: 'VARCHAR',
+                dataset_key: 'VARCHAR',
+                source_family: 'VARCHAR',
+                dataset_id: 'VARCHAR',
+                modified: 'DATE',
+                issued: 'DATE',
+                released: 'DATE',
+                temporal_start: 'DATE',
+                temporal_end: 'DATE',
+                row_count: 'BIGINT',
+                file_count: 'INTEGER',
+                total_bytes: 'BIGINT',
+                schema_hash: 'VARCHAR'
+              }
+            )

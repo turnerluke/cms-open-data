@@ -62,6 +62,16 @@ Adding a dataset to the platform is one TOML row. No new asset module,
 no hand-edited YAML, and no way for the orchestration layer and the
 modeling layer to disagree about what exists.
 
+Every extraction also writes a one-row vintage sidecar under
+`data/raw/_vintages/` (which upstream snapshot was captured), and
+`python -m cms_pipelines.vintage_ledger append` folds those sidecars
+plus a Parquet-footer summary of the landed data into a durable JSONL
+ledger at `data/vintages/ledger.jsonl` that is committed to the repo.
+The `fct_dataset_freshness` mart models the latest row per dataset —
+row-count deltas, upstream `modified` drift, and schema-hash changes
+across runs — so a warehouse rebuilt from scratch still knows how the
+data has moved over time.
+
 ## Quickstart
 
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.13+.

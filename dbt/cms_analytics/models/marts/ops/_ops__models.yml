@@ -1,0 +1,107 @@
+version: 2
+
+models:
+  - name: fct_dataset_freshness
+    description: |
+      Operational freshness view over the durable vintage ledger. One
+      row per dataset, keyed on `dataset_key`, describing the most
+      recent capture the pipeline has landed. Built from
+      `stg_cms__vintage_ledger`, which reads the committed JSONL at
+      `data/vintages/ledger.jsonl` — so this mart survives the
+      ephemeral raw-data teardown every CI run does, and can be
+      compared across builds to see how upstream vintages, row counts,
+      and Parquet schemas actually drift over time.
+
+      Modeling choices to be aware of:
+
+      - Grain is **one row per dataset** (the latest ledger row per
+        `dataset_key`), not per (`dataset_key`, `run_date`). For the
+        row-per-run shape, query `stg_cms__vintage_ledger` directly.
+        "Latest" is `run_date desc, captured_at desc` — the
+        `captured_at` tiebreaker only matters on the rare same-day
+        multi-capture, which the ledger's `(run_date, dataset_key)`
+        primary key does allow before dedupe.
+      - `days_since_capture` and `days_since_upstream_modified` are
+        computed against `current_date` at build time, so the mart is
+        **build-time stale** — a warehouse rebuilt weekly reports the
+        numbers as of the rebuild, not as of query time. Both are in
+        whole days.
+      - `row_count_delta` and `schema_changed` compare against the
+        **immediately prior ledger row** for the same dataset, ordered
+        by `(run_date, captured_at)`. Both are `NULL`/`false`
+        respectively for a dataset's first-ever ledger row (there is
+        no prior to compare against).
+      - `n_distinct_modified` counts distinct upstream `modified`
+        values observed across all ledger rows for the dataset — a
+        proxy for how many upstream snapshots the pipeline has
+        actually captured. `NULL` upstream dates (e.g. NPPES) don't
+        contribute; a dataset whose publisher exposes no modified
+        date will always have `n_distinct_modified = 0`.
+    columns:
+      - name: dataset_key
+        description: |
+          Registry key (or `nppes_providers` for the hand-written
+          sweep). Primary key.
+        data_tests:
+          - not_null
+          - unique
+      - name: asset_name
+        description: |
+          Dagster asset name that produced the extract (e.g.
+          `cms_hospital_general_information`).
+        data_tests:
+          - not_null
+      - name: source_family
+        description: |
+          Extraction family (`dkan_provider_data`,
+          `dkan_data_api_bulk`, `nppes`, `healthcare_gov`, …).
+        data_tests:
+          - not_null
+      - name: run_date
+        description: |
+          UTC `run_date` of the latest ledger row for the dataset.
+        data_tests:
+          - not_null
+      - name: captured_at
+        description: |
+          UTC timestamp of the latest capture — from the sidecar's
+          `captured_at`, not the ledger append time.
+      - name: days_since_capture
+        description: |
+          Whole days between `run_date` and `current_date` at build
+          time. Not query-time — the number ages on disk between
+          builds.
+      - name: modified
+        description: |
+          Upstream `modified` date as reported at capture time.
+          `NULL` for publishers that expose no modification date.
+      - name: days_since_upstream_modified
+        description: |
+          Whole days between `modified` and `current_date` at build
+          time. `NULL` when `modified` is `NULL`.
+      - name: row_count
+        description: |
+          Sum of Parquet-footer `num_rows` across the dataset's
+          files at the latest capture.
+        data_tests:
+          - not_null
+      - name: row_count_delta
+        description: |
+          `row_count` minus the row count of the immediately-prior
+          ledger row for the same dataset; `NULL` when this is the
+          dataset's first ledger row.
+      - name: n_runs
+        description: |
+          Total ledger rows recorded for this dataset (each row is
+          one capture on one `run_date`).
+      - name: n_distinct_modified
+        description: |
+          Distinct non-null upstream `modified` values observed
+          across the dataset's ledger rows — a proxy for the count
+          of publisher snapshots the pipeline has actually captured.
+      - name: schema_changed
+        description: |
+          `true` when the latest capture's `schema_hash` differs from
+          the immediately-prior capture's; `false` on match and for
+          the dataset's first ledger row. Union-style schema hash, so
+          a rename or type change in any Parquet file flips this.

@@ -17,7 +17,10 @@ description = "Allowlist for test files and example credentials"
 # (e.g. ``qhp_landscape_individual_medical_2026``) trip gitleaks's
 # generic-api-key entropy heuristic, so we allowlist the file outright;
 # secrets cannot end up here by design.
-paths = ['''.*tests/.*\.py$''', '''.*test_.*\.py$''', '''.*libs/cms_api/datasets\.toml$''']
+# The vintage ledger holds the same public dataset keys (as
+# ``"dataset_key":"..."`` JSONL fields) plus parquet footer stats, and
+# trips the same heuristic; allowlisted for the same reason.
+paths = ['''.*tests/.*\.py$''', '''.*test_.*\.py$''', '''.*libs/cms_api/datasets\.toml$''', '''data/vintages/ledger\.jsonl$''']
 
 regexes = [
     # AWS example credentials from official AWS documentation.
