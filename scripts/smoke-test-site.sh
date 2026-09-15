@@ -43,6 +43,7 @@ readonly ROUTES=(
     "/	CMS Open Data"
     "/clinicians/	Clinicians and industry payments"
     "/cost-vs-quality/	Cost vs quality"
+    "/dialysis-chains/	Dialysis chains"
     "/drug-spending/	Drug spending"
     "/home-health-hospice/	Home health and hospice"
     "/hospital-quality/	Hospital quality"
