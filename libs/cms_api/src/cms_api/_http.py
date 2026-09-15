@@ -7,14 +7,20 @@ exponential backoff; everything else surfaces immediately so callers
 don't silently swallow bad requests.
 
 When a 429 response carries an integer-seconds ``Retry-After`` header the
-retry loop honours it (clamped to the wait cap) instead of using the
-exponential schedule — CMS's data.cms.gov endpoints emit ``Retry-After`` when
-the per-IP rate-limit window is active, and sleeping for the server-suggested
-duration is the only way to survive it on shared egress IPs (e.g.
-GitHub-hosted runners) where multiple concurrent clients keep the budget
-drained. HTTP-date form ``Retry-After`` values are treated as absent — CMS
-uses the integer form and parsing calendar dates from a rate-limiter header
-is not worth the surface area.
+retry loop honours it (clamped to ``CMS_API_RETRY_AFTER_MAX``) instead of
+using the exponential schedule — CMS's data.cms.gov endpoints emit
+``Retry-After`` when the per-IP rate-limit window is active, and sleeping
+for the server-suggested duration is the only way to survive it on shared
+egress IPs (e.g. GitHub-hosted runners) where multiple concurrent clients
+keep the budget drained. HTTP-date form ``Retry-After`` values are treated
+as absent — CMS uses the integer form and parsing calendar dates from a
+rate-limiter header is not worth the surface area.
+
+The exponential-backoff branch is jittered by a random multiplier in
+``[0.75, 1.25]`` (clamped to ``wait_max``) so multiple CI jobs sharing an
+egress IP don't retry in lockstep and re-collide with the rate limiter.
+The ``Retry-After`` path is left exact — the server has told us when to
+come back and we should not perturb that.
 
 Defaults are tunable via environment variables so pipelines can adjust
 behaviour without code changes:
@@ -24,14 +30,20 @@ behaviour without code changes:
   (default ``5``).
 - ``CMS_API_RETRY_WAIT_MULTIPLIER`` — exponential-backoff multiplier in
   seconds (default ``0.5``); the test suite sets this to ``0`` for speed.
-- ``CMS_API_RETRY_WAIT_MAX`` — cap on any single retry sleep in seconds
-  (default ``8``). Also caps ``Retry-After`` values so a hostile or
-  bugged server can't stall the pipeline indefinitely.
+- ``CMS_API_RETRY_WAIT_MAX`` — cap on any single exponential-backoff
+  sleep in seconds (default ``8``).
+- ``CMS_API_RETRY_AFTER_MAX`` — cap on server-supplied ``Retry-After``
+  sleeps in seconds (default ``300``). Kept separate from
+  ``CMS_API_RETRY_WAIT_MAX`` so a CMS 120s cool-off is honoured in full
+  instead of being clipped to the exponential cap and racing the
+  rate-limit window; still bounded so a hostile or bugged server can't
+  stall the pipeline indefinitely.
 """
 
 from __future__ import annotations
 
 import os
+import random
 from typing import TYPE_CHECKING
 
 import httpx
@@ -52,6 +64,12 @@ DEFAULT_USER_AGENT = "cms-api/0.1 (+https://github.com/turnerluke/cms-open-data)
 DEFAULT_RETRY_MAX_ATTEMPTS = 5
 DEFAULT_RETRY_WAIT_MULTIPLIER = 0.5
 DEFAULT_RETRY_WAIT_MAX = 8.0
+DEFAULT_RETRY_AFTER_MAX = 300.0
+
+# Jitter applied to the exponential fallback: multiplicative in
+# ``[_JITTER_MIN, _JITTER_MAX]`` around the deterministic backoff.
+_JITTER_MIN = 0.75
+_JITTER_MAX = 1.25
 
 # Read timeout for bulk-file downloads. The multi-GB CMS CSVs can idle
 # for minutes between chunks on slower runners; the JSON-API default 30s
@@ -125,12 +143,19 @@ def _parse_retry_after_seconds(response: httpx.Response) -> float | None:
     return seconds
 
 
-def _make_wait(multiplier: float, wait_max: float) -> WaitCallable:
+def _make_wait(multiplier: float, wait_max: float, retry_after_max: float) -> WaitCallable:
     """Build the tenacity wait callable used by the retry decorator.
 
-    Falls back to exponential backoff for every retry case except a 429
-    that carries a parseable integer-seconds ``Retry-After``, in which case
-    the header value (clamped to ``wait_max``) is returned instead.
+    Falls back to jittered exponential backoff for every retry case
+    except a 429 that carries a parseable integer-seconds ``Retry-After``,
+    in which case the header value (clamped to ``retry_after_max``) is
+    returned unmodified — the server told us when to come back, don't
+    perturb that.
+
+    The exponential branch is multiplied by ``random.uniform(0.75, 1.25)``
+    and re-clamped to ``wait_max`` so multiple jobs on shared runner IPs
+    don't retry in lockstep and re-collide with the same rate-limit
+    window.
     """
     exponential = wait_exponential(multiplier=multiplier, min=0, max=wait_max)
 
@@ -141,8 +166,10 @@ def _make_wait(multiplier: float, wait_max: float) -> WaitCallable:
             if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == _HTTP_TOO_MANY_REQUESTS:
                 retry_after = _parse_retry_after_seconds(exc.response)
                 if retry_after is not None:
-                    return min(retry_after, wait_max)
-        return exponential(retry_state)
+                    return min(retry_after, retry_after_max)
+        base = exponential(retry_state)
+        jittered = base * random.uniform(_JITTER_MIN, _JITTER_MAX)  # noqa: S311
+        return min(jittered, wait_max)
 
     return _wait
 
@@ -159,11 +186,12 @@ def _run_with_retry[T](fn: Callable[[], T]) -> T:
     max_attempts = _env_int("CMS_API_RETRY_MAX_ATTEMPTS", DEFAULT_RETRY_MAX_ATTEMPTS)
     wait_multiplier = _env_float("CMS_API_RETRY_WAIT_MULTIPLIER", DEFAULT_RETRY_WAIT_MULTIPLIER)
     wait_max = _env_float("CMS_API_RETRY_WAIT_MAX", DEFAULT_RETRY_WAIT_MAX)
+    retry_after_max = _env_float("CMS_API_RETRY_AFTER_MAX", DEFAULT_RETRY_AFTER_MAX)
 
     @retry(
         retry=retry_if_exception(_is_transient),
         stop=stop_after_attempt(max_attempts),
-        wait=_make_wait(wait_multiplier, wait_max),
+        wait=_make_wait(wait_multiplier, wait_max, retry_after_max),
         reraise=True,
     )
     def _wrapped() -> T:
@@ -232,10 +260,10 @@ def download_file(
     """Stream ``url`` to ``dest`` in fixed-size chunks over HTTPS.
 
     Shares the retry policy with ``request_json``: transport errors and
-    HTTP 429/5xx retry with exponential backoff, and 429s carrying an
-    integer-seconds ``Retry-After`` sleep for that interval (clamped to
-    ``CMS_API_RETRY_WAIT_MAX``). All the ``CMS_API_RETRY_*`` env knobs
-    apply. This matters because CMS bulk-CSV file GETs (multi-GB responses
+    HTTP 429/5xx retry with jittered exponential backoff, and 429s
+    carrying an integer-seconds ``Retry-After`` sleep for that interval
+    (clamped to ``CMS_API_RETRY_AFTER_MAX``). All the ``CMS_API_RETRY_*``
+    env knobs apply. This matters because CMS bulk-CSV file GETs (multi-GB responses
     on ``data.cms.gov`` and ``download.cms.gov``) get 429'd on shared
     egress IPs the same way the JSON APIs do; without shared retry a
     single throttled file GET kills the whole asset.

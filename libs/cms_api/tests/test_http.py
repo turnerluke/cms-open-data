@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from cms_api._http import (
+    DEFAULT_RETRY_AFTER_MAX,
     DEFAULT_RETRY_WAIT_MAX,
     _make_wait,
     _parse_retry_after_seconds,
@@ -73,34 +74,72 @@ def test_parse_retry_after_seconds_negative() -> None:
 
 def test_wait_honors_retry_after_under_cap() -> None:
     """A 429 with a small ``Retry-After`` returns that value directly."""
-    wait = _make_wait(multiplier=0.5, wait_max=90.0)
+    wait = _make_wait(multiplier=0.5, wait_max=90.0, retry_after_max=300.0)
     outcome = _failed_outcome_from_response(httpx.Response(429, headers={"Retry-After": "3"}))
     assert wait(_retry_state_with_outcome(outcome)) == 3.0
 
 
-def test_wait_clamps_retry_after_to_cap() -> None:
-    """A pathological ``Retry-After: 500`` is capped at ``wait_max``."""
-    wait = _make_wait(multiplier=0.5, wait_max=90.0)
-    outcome = _failed_outcome_from_response(httpx.Response(429, headers={"Retry-After": "500"}))
-    assert wait(_retry_state_with_outcome(outcome)) == 90.0
+def test_wait_honors_retry_after_above_wait_max_below_after_max() -> None:
+    """A ``Retry-After`` above ``wait_max`` but below ``retry_after_max`` is honored in full.
+
+    CMS occasionally emits 120s cool-offs; clamping those to the 90s
+    exponential cap would race the rate-limit window and burn a retry.
+    """
+    wait = _make_wait(multiplier=0.5, wait_max=90.0, retry_after_max=300.0)
+    outcome = _failed_outcome_from_response(httpx.Response(429, headers={"Retry-After": "120"}))
+    assert wait(_retry_state_with_outcome(outcome)) == 120.0
+
+
+def test_wait_clamps_retry_after_to_retry_after_max() -> None:
+    """A pathological ``Retry-After: 9999`` is capped at ``retry_after_max``."""
+    wait = _make_wait(multiplier=0.5, wait_max=90.0, retry_after_max=300.0)
+    outcome = _failed_outcome_from_response(httpx.Response(429, headers={"Retry-After": "9999"}))
+    assert wait(_retry_state_with_outcome(outcome)) == 300.0
 
 
 def test_wait_falls_back_to_exponential_on_garbage_retry_after() -> None:
     """Unparseable ``Retry-After`` triggers the exponential fallback path.
 
-    With multiplier ``0`` the fallback returns ``0``, distinguishing it
-    from any non-zero ``Retry-After`` value.
+    With multiplier ``0`` the fallback returns ``0`` regardless of the
+    jitter factor, distinguishing it from any non-zero ``Retry-After``
+    value.
     """
-    wait = _make_wait(multiplier=0.0, wait_max=90.0)
+    wait = _make_wait(multiplier=0.0, wait_max=90.0, retry_after_max=300.0)
     outcome = _failed_outcome_from_response(httpx.Response(429, headers={"Retry-After": "tomorrow"}))
     assert wait(_retry_state_with_outcome(outcome)) == 0.0
 
 
 def test_wait_falls_back_to_exponential_on_5xx() -> None:
     """Non-429 transient errors always use the exponential schedule."""
-    wait = _make_wait(multiplier=0.0, wait_max=90.0)
+    wait = _make_wait(multiplier=0.0, wait_max=90.0, retry_after_max=300.0)
     outcome = _failed_outcome_from_response(httpx.Response(503))
     assert wait(_retry_state_with_outcome(outcome)) == 0.0
+
+
+def test_wait_exponential_branch_is_jittered_within_bounds() -> None:
+    """Exponential fallback stays within [0.75x, 1.25x] of deterministic and <= wait_max.
+
+    Sampling many times covers the jitter distribution; the deterministic
+    tenacity value at attempt 2 with multiplier 1.0 is 2.0s, so acceptable
+    outputs lie in [1.5, 2.5]. wait_max is set well above the ceiling so
+    clamping doesn't hide bugs.
+    """
+    wait = _make_wait(multiplier=1.0, wait_max=100.0, retry_after_max=300.0)
+    samples = [wait(_retry_state_with_outcome(_failed_outcome_from_response(httpx.Response(503)))) for _ in range(200)]
+    assert min(samples) >= 2.0 * 0.75
+    assert max(samples) <= 2.0 * 1.25
+    # Randomness actually varies the value (>1 distinct sample).
+    assert len({round(s, 6) for s in samples}) > 1
+
+
+def test_wait_exponential_jitter_reclamped_to_wait_max() -> None:
+    """Even after jitter widens the value, the result stays <= wait_max."""
+    # Deterministic exponential at attempt 2 with multiplier 10 is 20s, cap
+    # at 5 to force clamping regardless of the jitter draw.
+    wait = _make_wait(multiplier=10.0, wait_max=5.0, retry_after_max=300.0)
+    for _ in range(100):
+        value = wait(_retry_state_with_outcome(_failed_outcome_from_response(httpx.Response(503))))
+        assert value <= 5.0
 
 
 def test_wait_max_env_var_read_per_call(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -113,12 +152,13 @@ def test_wait_max_env_var_read_per_call(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("CMS_API_RETRY_WAIT_MAX", "12")
 
     # The wait factory itself doesn't read env — it takes the resolved
-    # value — but the default cap should stay 8s so a missing env var
-    # doesn't secretly change production behavior.
+    # value — but the default caps should stay stable so a missing env
+    # var doesn't secretly change production behavior.
     assert DEFAULT_RETRY_WAIT_MAX == 8.0
+    assert DEFAULT_RETRY_AFTER_MAX == 300.0
 
-    # And explicitly constructing with the env-derived cap works.
-    wait = _make_wait(multiplier=0.5, wait_max=12.0)
+    # A small explicit retry_after_max clamps the Retry-After path.
+    wait = _make_wait(multiplier=0.5, wait_max=90.0, retry_after_max=12.0)
     outcome = _failed_outcome_from_response(httpx.Response(429, headers={"Retry-After": "60"}))
     assert wait(_retry_state_with_outcome(outcome)) == 12.0
 
