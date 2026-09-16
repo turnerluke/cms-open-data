@@ -48,6 +48,7 @@ readonly ROUTES=(
     "/clinicians/	Clinicians and industry payments"
     "/cost-vs-quality/	Cost vs quality"
     "/dbt-docs/	dbt Docs"
+    "/data-quality/	Data quality"
     "/dialysis-chains/	Dialysis chains"
     "/drug-spending/	Drug spending"
     "/freshness/	Dataset freshness"
