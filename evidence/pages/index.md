@@ -55,6 +55,10 @@ hospital quality, modeled with dbt on DuckDB from CMS public datasets.
   did upstream last publish it, and what changed between weekly
   warehouse builds. Reads the durable vintage ledger committed to
   the repo.
+- [Data quality](/data-quality) — `dbt build` results for the run that
+  produced this deployment: per-model status, slowest builds,
+  test-outcome rollup, and prose write-ups of parked data-model
+  decisions (`dim_drug` name-only matching, no NDC bridge).
 - <a href="dbt-docs/" rel="external">dbt docs</a> — browsable
   model/column documentation and lineage for the dbt project, generated
   by `dbt docs generate --static` and served alongside this site.

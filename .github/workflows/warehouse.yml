@@ -164,6 +164,13 @@ jobs:
         working-directory: dbt/cms_analytics
         run: uv run dbt docs generate --profiles-dir . --target prod --static
 
+      - name: Publish dbt run results to warehouse
+        run: >
+          uv run python scripts/publish_dbt_run_results.py
+          --run-results dbt/cms_analytics/target/run_results.json
+          --manifest dbt/cms_analytics/target/manifest.json
+          --warehouse data/warehouse.duckdb
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
