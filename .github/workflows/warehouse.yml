@@ -157,6 +157,13 @@ jobs:
         working-directory: dbt/cms_analytics
         run: uv run dbt build --profiles-dir . --target prod
 
+      # `--static` emits a single self-contained target/static_index.html
+      # with manifest + catalog inlined — no relative-fetch or subpath
+      # issues when served from evidence/build/dbt-docs/index.html.
+      - name: Generate dbt docs
+        working-directory: dbt/cms_analytics
+        run: uv run dbt docs generate --profiles-dir . --target prod --static
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
@@ -186,6 +193,11 @@ jobs:
       - name: Build Evidence site
         working-directory: evidence
         run: npm run build:strict
+
+      - name: Copy dbt docs into site
+        run: |
+          mkdir -p evidence/build/dbt-docs
+          cp dbt/cms_analytics/target/static_index.html evidence/build/dbt-docs/index.html
 
       # Plain copy of the site alongside the Pages artifact: the Pages
       # artifact below is a single opaque tarball consumed by

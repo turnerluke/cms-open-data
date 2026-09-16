@@ -16,9 +16,13 @@
 #      shell / SPA-fallback / wrong-page response fails loudly.
 #
 # The route/sentinel table below is kept in sync by hand with the
-# evidence/pages/*.md files (all shallow, one entry per top-level page).
-# Sentinels are the frontmatter `title:` values — stable across data
-# refreshes, unlike any count/aggregate that would change week over week.
+# evidence/pages/*.md files (all shallow, one entry per top-level page)
+# plus any non-Evidence routes served from evidence/build/ (e.g. the
+# dbt-docs static bundle copied in by the warehouse workflow).
+# Sentinels are the frontmatter `title:` values for Evidence pages —
+# stable across data refreshes, unlike any count/aggregate that would
+# change week over week — or an equivalent stable HTML marker for
+# non-Evidence routes.
 #
 # Runnable locally against the live site:
 #
@@ -43,6 +47,7 @@ readonly ROUTES=(
     "/	CMS Open Data"
     "/clinicians/	Clinicians and industry payments"
     "/cost-vs-quality/	Cost vs quality"
+    "/dbt-docs/	dbt Docs"
     "/dialysis-chains/	Dialysis chains"
     "/drug-spending/	Drug spending"
     "/freshness/	Dataset freshness"

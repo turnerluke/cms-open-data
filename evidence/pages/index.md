@@ -55,6 +55,15 @@ hospital quality, modeled with dbt on DuckDB from CMS public datasets.
   did upstream last publish it, and what changed between weekly
   warehouse builds. Reads the durable vintage ledger committed to
   the repo.
+- <a href="dbt-docs/" rel="external">dbt docs</a> — browsable
+  model/column documentation and lineage for the dbt project, generated
+  by `dbt docs generate --static` and served alongside this site.
+  <!-- Raw anchor on purpose: /dbt-docs/ is not an Evidence route.
+       rel="external" makes the prerender crawler skip it (it 404s at
+       build time — the docs are copied in after the build) and forces
+       a full-page load at runtime. The href stays relative so it
+       resolves under both / (local dev) and /cms-open-data/ (deployed
+       basePath). -->
 
 ## Warehouse coverage
 
