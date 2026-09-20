@@ -552,7 +552,7 @@ jobs:
       actions: read
     steps:
       - name: Download lint outputs
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: lint-output-*
           path: lint-outputs
